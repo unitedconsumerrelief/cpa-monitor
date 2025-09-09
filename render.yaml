@@ -3,6 +3,7 @@ services:
     name: ringba-webhook
     env: python
     plan: free
+    pythonVersion: 3.11.10
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
