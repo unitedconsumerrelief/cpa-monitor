@@ -212,11 +212,14 @@ async def write_sheet_data(sheet_name: str, data: List[List[Any]]):
 
 async def background_writer():
     """Background task to flush queued data to Google Sheets"""
-    global background_writer_queue
     while True:
         try:
             await asyncio.sleep(5)  # Wait 5 seconds
             
+            # Check if there are any items to process
+            if not background_writer_queue:
+                continue
+                
             async with background_writer_lock:
                 if background_writer_queue:
                     # Ensure headers exist
@@ -228,7 +231,7 @@ async def background_writer():
                     
                     # Flush up to 50 rows
                     rows_to_flush = background_writer_queue[:50]
-                    background_writer_queue = background_writer_queue[50:]
+                    background_writer_queue[:] = background_writer_queue[50:]
                     
                     if rows_to_flush:
                         await append_to_sheet("Ringba Raw", rows_to_flush)
