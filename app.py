@@ -287,13 +287,9 @@ async def ringba_webhook(request: Request):
         did_raw = body.get("did", "")
         did_canon = normalize_did(did_raw)
         
-        # Filter by campaigns
+        # Get campaign info (no filtering - accept all calls from Ringba)
         campaign_name = body.get("campaignName", "")
         campaign_id = body.get("campaignId", "")
-        
-        if RINGBA_CAMPAIGNS and campaign_name not in RINGBA_CAMPAIGNS and campaign_id not in RINGBA_CAMPAIGNS:
-            logger.info(f"Call filtered out by campaign: {call_id}")
-            return {"status": "filtered"}
         
         # Prepare row data
         row = [
