@@ -212,6 +212,7 @@ async def write_sheet_data(sheet_name: str, data: List[List[Any]]):
 
 async def background_writer():
     """Background task to flush queued data to Google Sheets"""
+    global background_writer_queue
     while True:
         try:
             await asyncio.sleep(5)  # Wait 5 seconds
