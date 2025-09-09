@@ -234,7 +234,7 @@ async def background_writer():
                         logger.info(f"Flushed {len(rows_to_flush)} rows to Google Sheets")
                         
             except Exception as e:
-            logger.error(f"Error in background writer: {e}")
+                logger.error(f"Error in background writer: {e}")
 
 async def background_cache():
     """Background task to maintain realtime DIDs cache"""
