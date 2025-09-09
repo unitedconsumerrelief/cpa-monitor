@@ -134,7 +134,7 @@ async def ensure_headers_exist(sheet_name: str, headers: List[str]):
             spreadsheetId=sheet_id,
             range=range_name
         ).execute()
-
+        
         values = result.get('values', [])
         if not values or values[0] != headers:
             # Headers don't exist or are different, add them
@@ -146,7 +146,7 @@ async def ensure_headers_exist(sheet_name: str, headers: List[str]):
                 range=range_name,
                 valueInputOption='RAW',
                 body=body
-    ).execute()
+            ).execute()
             logger.info(f"Added headers to {sheet_name} sheet")
     except Exception as e:
         logger.error(f"Failed to ensure headers exist for {sheet_name}: {e}")
@@ -167,7 +167,7 @@ async def append_to_sheet(sheet_name: str, rows: List[List[Any]]):
             valueInputOption='RAW',
             insertDataOption='INSERT_ROWS',
             body=body
-    ).execute()
+        ).execute()
         
         logger.info(f"Appended {len(rows)} rows to {sheet_name} sheet")
     except Exception as e:
@@ -183,7 +183,7 @@ async def read_sheet_data(sheet_name: str) -> List[List[Any]]:
             spreadsheetId=sheet_id,
             range=range_name
         ).execute()
-
+        
         return result.get('values', [])
     except Exception as e:
         logger.error(f"Failed to read from {sheet_name} sheet: {e}")
@@ -233,7 +233,7 @@ async def background_writer():
                         await append_to_sheet("Ringba Raw", rows_to_flush)
                         logger.info(f"Flushed {len(rows_to_flush)} rows to Google Sheets")
                         
-            except Exception as e:
+        except Exception as e:
             logger.error(f"Error in background writer: {e}")
 
 async def background_cache():
@@ -245,7 +245,7 @@ async def background_cache():
             # Read Real Time tab
             data = await read_sheet_data("Real Time")
             if data and len(data) > 1:  # Skip header row
-            global realtime_dids
+                global realtime_dids
                 realtime_dids = set()
                 for row in data[1:]:  # Skip header
                     if row and len(row) > 0:
@@ -292,7 +292,7 @@ async def ringba_webhook(request: Request):
             return {"status": "filtered"}
         
         # Prepare row data
-    row = [
+        row = [
             call_id,
             body.get("callStartUtc", ""),
             did_raw,
@@ -349,7 +349,7 @@ async def refresh_map():
         
         for row in rows:
             if len(row) <= max(call_id_idx, call_start_idx, did_canon_idx, publisher_name_idx, publisher_id_idx, campaign_idx):
-            continue
+                continue
 
             did_canon = str(row[did_canon_idx]).strip()
             campaign = str(row[campaign_idx]).strip()
