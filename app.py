@@ -216,26 +216,25 @@ async def background_writer():
         try:
             await asyncio.sleep(5)  # Wait 5 seconds
             
-            # Check if there are any items to process
-            if not background_writer_queue:
-                continue
-                
             async with background_writer_lock:
-                if background_writer_queue:
-                    # Ensure headers exist
-                    headers = ["call_id","call_start_utc","did_raw","did_canon","caller_id",
-                             "duration_sec","disposition","campaign","target",
-                             "publisher_id","publisher_name",
-                             "payout","revenue","_ingested_at"]
-                    await ensure_headers_exist("Ringba Raw", headers)
-                    
-                    # Flush up to 50 rows
-                    rows_to_flush = background_writer_queue[:50]
-                    background_writer_queue[:] = background_writer_queue[50:]
-                    
-                    if rows_to_flush:
-                        await append_to_sheet("Ringba Raw", rows_to_flush)
-                        logger.info(f"Flushed {len(rows_to_flush)} rows to Google Sheets")
+                # Check if there are any items to process (inside the lock)
+                if not background_writer_queue:
+                    continue
+                
+                # Ensure headers exist
+                headers = ["call_id","call_start_utc","did_raw","did_canon","caller_id",
+                         "duration_sec","disposition","campaign","target",
+                         "publisher_id","publisher_name",
+                         "payout","revenue","_ingested_at"]
+                await ensure_headers_exist("Ringba Raw", headers)
+                
+                # Flush up to 50 rows
+                rows_to_flush = background_writer_queue[:50]
+                background_writer_queue[:] = background_writer_queue[50:]
+                
+                if rows_to_flush:
+                    await append_to_sheet("Ringba Raw", rows_to_flush)
+                    logger.info(f"Flushed {len(rows_to_flush)} rows to Google Sheets")
                         
         except Exception as e:
             logger.error(f"Error in background writer: {e}")
