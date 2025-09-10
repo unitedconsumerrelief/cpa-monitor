@@ -155,7 +155,7 @@ async def append_to_sheet(sheet_name: str, rows: List[List[Any]]):
     """Append rows to the specified sheet"""
     try:
         sheet_id = get_sheet_id()
-        range_name = f"{sheet_name}!A:Z"
+        range_name = f"{sheet_name}!A:N"
         
         body = {
             'values': rows
@@ -177,7 +177,7 @@ async def read_sheet_data(sheet_name: str) -> List[List[Any]]:
     """Read all data from the specified sheet"""
     try:
         sheet_id = get_sheet_id()
-        range_name = f"{sheet_name}!A:Z"
+        range_name = f"{sheet_name}!A:N"
         
         result = sheets_service.spreadsheets().values().get(
             spreadsheetId=sheet_id,
@@ -193,7 +193,7 @@ async def write_sheet_data(sheet_name: str, data: List[List[Any]]):
     """Write data to the specified sheet (overwrites existing data)"""
     try:
         sheet_id = get_sheet_id()
-        range_name = f"{sheet_name}!A:Z"
+        range_name = f"{sheet_name}!A:N"
         
         body = {
             'values': data
