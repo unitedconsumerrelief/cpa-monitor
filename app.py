@@ -279,6 +279,10 @@ async def background_cache():
 async def ringba_webhook(request: Request):
     """Handle incoming Ringba webhook data"""
     try:
+        # Get raw body for debugging
+        raw_body = await request.body()
+        logger.info(f"📥 RAW WEBHOOK BODY: {raw_body.decode('utf-8', errors='replace')}")
+        
         # Parse JSON body
         body = await request.json()
         
@@ -347,6 +351,10 @@ async def ringba_webhook(request: Request):
         logger.info(f"✅ Successfully queued call for processing: {call_id}")
         return {"status": "queued"}
         
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON Parse Error: {e}")
+        logger.error(f"Raw body: {raw_body.decode('utf-8', errors='replace') if 'raw_body' in locals() else 'Not available'}")
+        return {"status": "error", "message": "Invalid JSON format"}
     except Exception as e:
         logger.error(f"❌ Error processing webhook: {e}")
         logger.error(f"Request body: {body if 'body' in locals() else 'Failed to parse'}")
