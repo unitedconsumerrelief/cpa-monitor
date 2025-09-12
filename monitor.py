@@ -379,22 +379,45 @@ class RingbaMonitor:
                 metric.accurate_cpa = 0.0
                 logger.info(f"📊 {metric.publisher_name}: 0 sales, $0.00 accurate CPA")
         
+        # Add publishers that have sales in Google Sheets but no Ringba data
+        existing_publishers = {metric.publisher_name for metric in metrics}
+        for publisher_name, sales_count in sales_data.items():
+            if publisher_name not in existing_publishers and sales_count > 0:
+                # Create a new metric for this publisher with sales but no Ringba data
+                new_metric = PublisherMetrics(
+                    publisher_name=publisher_name,
+                    completed=0,  # No calls in Ringba
+                    payout=0.0,   # No payout in Ringba
+                    revenue=0.0,  # No revenue in Ringba
+                    profit=0.0,   # No profit in Ringba
+                    sales_count=sales_count,
+                    accurate_cpa=0.0  # Will be set below
+                )
+                
+                # Apply the "X Sales / No Payout" rule
+                if new_metric.payout == 0.0 and sales_count > 0:
+                    new_metric.sales_display = f"{sales_count} Sales/No$"
+                    new_metric.accurate_cpa = 0.0
+                else:
+                    new_metric.accurate_cpa = new_metric.calculate_accurate_cpa(sales_count)
+                
+                metrics.append(new_metric)
+                logger.info(f"📊 {publisher_name}: {sales_count} sales, {new_metric.sales_display if hasattr(new_metric, 'sales_display') and new_metric.sales_display else f'${new_metric.accurate_cpa:.2f} CPA'}")
+        
         return metrics
 
-    async def send_slack_summary(self, metrics_2hour: List[PublisherMetrics], metrics_daily: List[PublisherMetrics], 
-                                start_time: datetime, end_time: datetime, daily_start_time: datetime):
-        """Send formatted summary to Slack with both 2-hour and daily views"""
-        if not metrics_2hour and not metrics_daily:
+    async def send_slack_summary(self, metrics_2hour: List[PublisherMetrics], 
+                                start_time: datetime, end_time: datetime):
+        """Send formatted summary to Slack with 2-hour window data"""
+        if not metrics_2hour:
             logger.warning("No metrics to send to Slack")
             return
         
         # Calculate totals
         totals_2hour = self.calculate_totals(metrics_2hour) if metrics_2hour else PublisherMetrics(publisher_name="TOTALS")
-        totals_daily = self.calculate_totals(metrics_daily) if metrics_daily else PublisherMetrics(publisher_name="TOTALS")
         
         # Format time range
         time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
-        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
         
         message = {
             "text": f"📊 Ringba Performance Summary - {time_range}",
@@ -410,24 +433,12 @@ class RingbaMonitor:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*Last 2 Hours ({time_range})*\n"
+                        "text": f"*Performance Summary ({time_range})*\n"
                                f"• *Completed Calls:* {totals_2hour.completed:,}\n"
                                f"• *Revenue:* ${totals_2hour.revenue:,.2f}\n"
                                f"• *CPA:* ${totals_2hour.accurate_cpa:.2f}\n"
                                f"• *Profit:* ${totals_2hour.profit:,.2f}\n"
                                f"• *Conversion Rate:* {totals_2hour.conversion_percent:.1f}%"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Daily Total ({daily_range})*\n"
-                               f"• *Completed Calls:* {totals_daily.completed:,}\n"
-                               f"• *Revenue:* ${totals_daily.revenue:,.2f}\n"
-                               f"• *CPA:* ${totals_daily.accurate_cpa:.2f}\n"
-                               f"• *Profit:* ${totals_daily.profit:,.2f}\n"
-                               f"• *Conversion Rate:* {totals_daily.conversion_percent:.1f}%"
                     }
                 }
             ]
@@ -436,7 +447,7 @@ class RingbaMonitor:
         # Add top performers if we have data
         if metrics_2hour:
             top_performers = sorted(metrics_2hour, key=lambda x: x.completed, reverse=True)[:5]
-            performers_text = "*🏆 Top 5 Publishers by Completed Calls (Last 2 Hours):*\n"
+            performers_text = "*🏆 Top 5 Publishers by Completed Calls:*\n"
             for i, metric in enumerate(top_performers, 1):
                 performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.accurate_cpa:.2f} CPA\n"
             
@@ -450,13 +461,19 @@ class RingbaMonitor:
         
         # Add detailed table
         if metrics_2hour:
-            table_text = "*📋 ALL Publishers Performance (Last 2 Hours):*\n"
+            table_text = "*📋 ALL Publishers Performance:*\n"
             table_text += "```\n"
-            table_text += f"{'Publisher':<20} {'Completed':<10} {'Sales':<6} {'Accurate CPA':<12} {'Revenue':<10} {'Profit':<10}\n"
+            table_text += f"{'Publisher':<20} {'Completed':<10} {'Sales':<6} {'Accurate CPA':<15} {'Revenue':<10} {'Profit':<10}\n"
             table_text += "-" * 70 + "\n"
             
             for metric in sorted(metrics_2hour, key=lambda x: x.completed, reverse=True):
-                table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} {metric.sales_count:<6} ${metric.accurate_cpa:<11.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
+                # Handle special case: show "X Sales / No Payout" for zero payout with sales
+                if hasattr(metric, 'sales_display') and metric.sales_display:
+                    cpa_display = metric.sales_display
+                else:
+                    cpa_display = f"${metric.accurate_cpa:.2f}"
+                
+                table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} {metric.sales_count:<6} {cpa_display:<15} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
             
             table_text += "```"
             
@@ -465,26 +482,6 @@ class RingbaMonitor:
                 "text": {
                     "type": "mrkdwn",
                     "text": table_text
-                }
-            })
-        
-        # Add daily accumulated table
-        if metrics_daily:
-            daily_table_text = "*📋 ALL Publishers Performance (Daily Accumulated):*\n"
-            daily_table_text += "```\n"
-            daily_table_text += f"{'Publisher':<20} {'Completed':<10} {'Sales':<6} {'Accurate CPA':<12} {'Revenue':<10} {'Profit':<10}\n"
-            daily_table_text += "-" * 70 + "\n"
-            
-            for metric in sorted(metrics_daily, key=lambda x: x.completed, reverse=True):
-                daily_table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} {metric.sales_count:<6} ${metric.accurate_cpa:<11.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
-            
-            daily_table_text += "```"
-            
-            message["blocks"].append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": daily_table_text
                 }
             })
         
@@ -499,50 +496,50 @@ class RingbaMonitor:
         except Exception as e:
             logger.error(f"Error sending Slack message: {e}")
 
-    async def send_end_of_day_summary(self, metrics_daily: List[PublisherMetrics], 
-                                    daily_start_time: datetime, end_time: datetime):
+    async def send_end_of_day_summary(self, metrics_2hour: List[PublisherMetrics], 
+                                    start_time: datetime, end_time: datetime):
         """Send end-of-day summary with all publishers and CPA calculations"""
-        if not metrics_daily:
-            logger.warning("No daily metrics to send to Slack")
+        if not metrics_2hour:
+            logger.warning("No metrics to send to Slack")
             return
         
         # Calculate totals
-        totals_daily = self.calculate_totals(metrics_daily)
+        totals_2hour = self.calculate_totals(metrics_2hour)
         
         # Format time range
-        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+        time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
         
         message = {
-            "text": f"📊 END OF DAY REPORT - {daily_range}",
+            "text": f"📊 END OF DAY REPORT - {time_range}",
             "blocks": [
                 {
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": f"📊 END OF DAY REPORT - {daily_range}"
+                        "text": f"📊 END OF DAY REPORT - {time_range}"
                     }
                 },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*📈 Daily Summary (9am-9pm EDT)*\n"
-                               f"• *Total Calls:* {totals_daily.incoming:,}\n"
-                               f"• *Completed Calls:* {totals_daily.completed:,}\n"
-                               f"• *Revenue:* ${totals_daily.revenue:,.2f}\n"
-                               f"• *Payout:* ${totals_daily.payout:,.2f}\n"
-                               f"• *Profit:* ${totals_daily.profit:,.2f}\n"
-                               f"• *Overall CPA:* ${totals_daily.accurate_cpa:.2f}\n"
-                               f"• *Conversion Rate:* {totals_daily.conversion_percent:.1f}%"
+                        "text": f"*📈 Final Summary*\n"
+                               f"• *Total Calls:* {totals_2hour.incoming:,}\n"
+                               f"• *Completed Calls:* {totals_2hour.completed:,}\n"
+                               f"• *Revenue:* ${totals_2hour.revenue:,.2f}\n"
+                               f"• *Payout:* ${totals_2hour.payout:,.2f}\n"
+                               f"• *Profit:* ${totals_2hour.profit:,.2f}\n"
+                               f"• *Overall CPA:* ${totals_2hour.accurate_cpa:.2f}\n"
+                               f"• *Conversion Rate:* {totals_2hour.conversion_percent:.1f}%"
                     }
                 }
             ]
         }
         
         # Add top performers
-        if metrics_daily:
-            top_performers = sorted(metrics_daily, key=lambda x: x.completed, reverse=True)[:5]
-            performers_text = "*🏆 Top 5 Publishers by Completed Calls (Daily):*\n"
+        if metrics_2hour:
+            top_performers = sorted(metrics_2hour, key=lambda x: x.completed, reverse=True)[:5]
+            performers_text = "*🏆 Top 5 Publishers by Completed Calls:*\n"
             for i, metric in enumerate(top_performers, 1):
                 performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.accurate_cpa:.2f} CPA\n"
             
@@ -554,14 +551,14 @@ class RingbaMonitor:
                 }
             })
         
-        # Add complete daily table with all publishers
-        if metrics_daily:
-            table_text = "*📋 ALL Publishers Performance (Daily Summary):*\n"
+        # Add complete table with all publishers
+        if metrics_2hour:
+            table_text = "*📋 ALL Publishers Performance:*\n"
             table_text += "```\n"
             table_text += f"{'#':<3} {'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Payout':<10}\n"
             table_text += "-" * 80 + "\n"
             
-            for i, metric in enumerate(sorted(metrics_daily, key=lambda x: x.completed, reverse=True), 1):
+            for i, metric in enumerate(sorted(metrics_2hour, key=lambda x: x.completed, reverse=True), 1):
                 table_text += f"{i:<3} {metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.payout:<9.2f}\n"
             
             table_text += "```"
@@ -575,9 +572,9 @@ class RingbaMonitor:
             })
         
         # Add CPA analysis
-        if metrics_daily:
+        if metrics_2hour:
             # Calculate CPA statistics
-            cpas = [m.cpa for m in metrics_daily if m.completed > 0]
+            cpas = [m.cpa for m in metrics_2hour if m.completed > 0]
             if cpas:
                 avg_cpa = sum(cpas) / len(cpas)
                 min_cpa = min(cpas)
@@ -603,7 +600,7 @@ class RingbaMonitor:
             "text": {
                 "type": "mrkdwn",
                 "text": f"*✅ End of Day Summary:*\n"
-                       f"• Monitoring completed for {daily_start_time.strftime('%Y-%m-%d')}\n"
+                       f"• Monitoring completed for {start_time.strftime('%Y-%m-%d')}\n"
                        f"• Next monitoring cycle starts tomorrow at 11am EDT\n"
                        f"• All data is accurate and matches Ringba dashboard"
             }
@@ -672,34 +669,25 @@ class RingbaMonitor:
             start_time = start_time_est.astimezone(timezone.utc)
             end_time = end_time_est.astimezone(timezone.utc)
             
-            # Calculate daily range (from 9am EDT today)
-            daily_start_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
-            daily_start_utc = daily_start_est.astimezone(timezone.utc)
-            
             logger.info(f"Current EDT time: {est_now}")
             logger.info(f"Report type: {report_type}")
             logger.info(f"Fetching 2-hour data for {start_time} to {end_time}")
-            logger.info(f"Fetching daily data for {daily_start_utc} to {end_time}")
             
-            # Fetch both 2-hour and daily data
+            # Fetch 2-hour data only
             metrics_2hour = await self.fetch_ringba_data(start_time, end_time)
-            metrics_daily = await self.fetch_ringba_data(daily_start_utc, end_time)
             
-            if metrics_2hour or metrics_daily:
-                logger.info(f"Fetched {len(metrics_2hour)} 2-hour metrics, {len(metrics_daily)} daily metrics")
+            if metrics_2hour:
+                logger.info(f"Fetched {len(metrics_2hour)} 2-hour metrics")
                 
                 # Enhance metrics with accurate CPA calculation
-                if metrics_2hour:
-                    metrics_2hour = await self.enhance_metrics_with_accurate_cpa(metrics_2hour, start_time, end_time)
-                if metrics_daily:
-                    metrics_daily = await self.enhance_metrics_with_accurate_cpa(metrics_daily, daily_start_utc, end_time)
+                metrics_2hour = await self.enhance_metrics_with_accurate_cpa(metrics_2hour, start_time, end_time)
                 
                 if report_type == "end-of-day":
-                    # Send end-of-day report
-                    await self.send_end_of_day_summary(metrics_daily, daily_start_utc, end_time)
+                    # Send end-of-day report (using 2-hour data)
+                    await self.send_end_of_day_summary(metrics_2hour, start_time, end_time)
                 else:
                     # Send regular 2-hour report
-                    await self.send_slack_summary(metrics_2hour, metrics_daily, start_time, end_time, daily_start_utc)
+                    await self.send_slack_summary(metrics_2hour, start_time, end_time)
             else:
                 logger.warning("No metrics fetched from Ringba")
                 

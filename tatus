@@ -1,0 +1,5 @@
+[33m025ebd2[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31mcpa-monitor/master[m[33m)[m Fix Google Sheets column mapping
+[33m9acb054[m Add 5-minute time buffer for data accuracy
+[33mfde13c1[m Add Google Sheets integration and accurate CPA calculation
+[33me009808[m[33m ([m[1;31morigin/master[m[33m)[m FIX: Add better JSON error handling and raw body logging for webhook debugging
+[33m9d7be69[m FIX: Remove campaign filtering that was blocking calls due to whitespace mismatch

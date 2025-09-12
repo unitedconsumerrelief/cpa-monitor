@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test sending correct 1pm-3pm EDT data to Slack"""
+"""Resend the 11am report that failed due to webhook issue"""
 
 import asyncio
 import aiohttp
@@ -131,15 +131,14 @@ def calculate_totals(metrics: List[PublisherMetrics]) -> PublisherMetrics:
     
     return totals
 
-async def fetch_correct_1pm_3pm_data(start_time: datetime, end_time: datetime) -> List[PublisherMetrics]:
-    """Fetch correct 1pm-3pm EDT data from Ringba API"""
+async def fetch_ringba_data(start_time: datetime, end_time: datetime) -> List[PublisherMetrics]:
+    """Fetch data from Ringba API"""
     ringba_token = "09f0c9f035a894013c44904a9557433e3b41073cc7965927f5455f151a6eebe897ab6b0fd300aad3675e0195fe2ca22b00bf5c730a9c964bcf3ff764feaa2fbf08fd0e60b33407709f7419d0639fe8974ea8c28bcd4596af498a9ddd4cc33a37ce68cb2284c632b5559ea865f36342771de39372"
     ringba_account = "RA092c10a91f7c461098e354a1bbeda598"
     
     url = f"https://api.ringba.com/v2/{ringba_account}/insights"
     headers = {"Authorization": f"Token {ringba_token}", "Content-Type": "application/json"}
     
-    # CORRECTED: Use proper EDT timezone (UTC-4 in summer)
     payload = {
         "reportStart": start_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reportEnd": end_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -187,51 +186,64 @@ async def fetch_correct_1pm_3pm_data(start_time: datetime, end_time: datetime) -
         print(f"Error fetching data: {e}")
         return []
 
-async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time: datetime, end_time: datetime):
-    """Send correct formatted summary to Slack"""
-    slack_webhook_url = "https://hooks.slack.com/services/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"
+async def send_11am_report(metrics_2hour: List[PublisherMetrics], metrics_daily: List[PublisherMetrics], 
+                          start_time: datetime, end_time: datetime, daily_start_time: datetime):
+    """Send the 11am report that failed due to webhook issue"""
+    slack_webhook_url = "https://hooks.slack.com/services/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"
     
-    if not metrics:
+    if not metrics_2hour and not metrics_daily:
         print("No metrics to send to Slack")
         return
     
     # Calculate totals
-    totals = calculate_totals(metrics)
+    totals_2hour = calculate_totals(metrics_2hour) if metrics_2hour else PublisherMetrics(publisher_name="TOTALS")
+    totals_daily = calculate_totals(metrics_daily) if metrics_daily else PublisherMetrics(publisher_name="TOTALS")
     
     # Format time range
     time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+    daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
     
     message = {
-        "text": f"🔄 RESEND: Ringba Performance Summary - {time_range}",
+        "text": f"📊 RESEND: Ringba Performance Summary - {time_range}",
         "blocks": [
             {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔄 RESEND: Ringba Performance Summary - {time_range}"
+                    "text": f"📊 RESEND: Ringba Performance Summary - {time_range}"
                 }
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*📊 Complete Results ({time_range})*\n"
-                           f"• *Total Calls:* {totals.incoming:,}\n"
-                           f"• *Completed Calls:* {totals.completed:,}\n"
-                           f"• *Revenue:* ${totals.revenue:,.2f}\n"
-                           f"• *Payout:* ${totals.payout:,.2f}\n"
-                           f"• *Profit:* ${totals.profit:,.2f}\n"
-                           f"• *CPA (Cost Per Acquisition):* ${totals.cpa:.2f}\n"
-                           f"• *Conversion Rate:* {totals.conversion_percent:.1f}%"
+                    "text": f"*Last 2 Hours ({time_range})*\n"
+                           f"• *Completed Calls:* {totals_2hour.completed:,}\n"
+                           f"• *Revenue:* ${totals_2hour.revenue:,.2f}\n"
+                           f"• *CPA:* ${totals_2hour.cpa:.2f}\n"
+                           f"• *Profit:* ${totals_2hour.profit:,.2f}\n"
+                           f"• *Conversion Rate:* {totals_2hour.conversion_percent:.1f}%"
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Daily Total ({daily_range})*\n"
+                           f"• *Completed Calls:* {totals_daily.completed:,}\n"
+                           f"• *Revenue:* ${totals_daily.revenue:,.2f}\n"
+                           f"• *CPA:* ${totals_daily.cpa:.2f}\n"
+                           f"• *Profit:* ${totals_daily.profit:,.2f}\n"
+                           f"• *Conversion Rate:* {totals_daily.conversion_percent:.1f}%"
                 }
             }
         ]
     }
     
-    # Add top performers
-    if metrics:
-        top_performers = sorted(metrics, key=lambda x: x.completed, reverse=True)[:5]
-        performers_text = "*🏆 Top 5 Publishers by Completed Calls:*\n"
+    # Add top performers if we have data
+    if metrics_2hour:
+        top_performers = sorted(metrics_2hour, key=lambda x: x.completed, reverse=True)[:5]
+        performers_text = "*🏆 Top 5 Publishers by Completed Calls (Last 2 Hours):*\n"
         for i, metric in enumerate(top_performers, 1):
             performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.cpa:.2f} CPA\n"
         
@@ -244,14 +256,14 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
         })
     
     # Add detailed table
-    if metrics:
-        table_text = "*📋 ALL Publishers Performance:*\n"
+    if metrics_2hour:
+        table_text = "*📋 ALL Publishers Performance (Last 2 Hours):*\n"
         table_text += "```\n"
-        table_text += f"{'#':<3} {'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Payout':<10}\n"
-        table_text += "-" * 80 + "\n"
+        table_text += f"{'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Profit':<10}\n"
+        table_text += "-" * 70 + "\n"
         
-        for i, metric in enumerate(sorted(metrics, key=lambda x: x.completed, reverse=True), 1):
-            table_text += f"{i:<3} {metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.payout:<9.2f}\n"
+        for metric in sorted(metrics_2hour, key=lambda x: x.completed, reverse=True):
+            table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
         
         table_text += "```"
         
@@ -263,17 +275,35 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
             }
         })
     
-    # Add resend confirmation
+    # Add daily accumulated table
+    if metrics_daily:
+        daily_table_text = "*📋 ALL Publishers Performance (Daily Accumulated):*\n"
+        daily_table_text += "```\n"
+        daily_table_text += f"{'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Profit':<10}\n"
+        daily_table_text += "-" * 70 + "\n"
+        
+        for metric in sorted(metrics_daily, key=lambda x: x.completed, reverse=True):
+            daily_table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
+        
+        daily_table_text += "```"
+        
+        message["blocks"].append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": daily_table_text
+            }
+        })
+    
+    # Add resend notice
     message["blocks"].append({
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": f"*🔄 RESEND CONFIRMATION:*\n"
-                   f"• This is a resend of the 9am-11am EDT report that failed earlier\n"
-                   f"• Webhook issue has been fixed\n"
-                   f"• All publisher data included (no missing records)\n"
-                   f"• CPA calculations are accurate\n"
-                   f"• Timezone: Eastern Daylight Time (EDT) - UTC-4"
+            "text": f"*🔄 Resend Notice:*\n"
+                   f"• This is the 11am report that failed due to webhook issue\n"
+                   f"• Webhook has been fixed and reports will resume normally\n"
+                   f"• Next report scheduled for 1pm EDT"
         }
     })
     
@@ -281,7 +311,7 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
         async with aiohttp.ClientSession() as session:
             async with session.post(slack_webhook_url, json=message) as response:
                 if response.status == 200:
-                    print("✅ Successfully sent RESEND Slack report")
+                    print("✅ Successfully resent 11am report to Slack")
                 else:
                     error_text = await response.text()
                     print(f"❌ Slack webhook error {response.status}: {error_text}")
@@ -289,40 +319,44 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
         print(f"❌ Error sending Slack message: {e}")
 
 async def main():
-    """Resend 9am-11am EDT Ringba report to Slack"""
-    print("🚀 RESENDING 9AM-11AM EDT RINGBA REPORT")
-    print("=" * 60)
+    """Resend the 11am report"""
+    print("🔄 RESENDING 11AM REPORT")
+    print("=" * 50)
     
-    # Use the RESEND time range: 9am-11am EDT (UTC 13:00-15:00) on 2025-09-12
-    start_time_utc = datetime(2025, 9, 12, 13, 0, 0, tzinfo=timezone.utc)  # 1pm UTC = 9am EDT
-    end_time_utc = datetime(2025, 9, 12, 15, 0, 0, tzinfo=timezone.utc)    # 3pm UTC = 11am EDT
+    # Fetch 9am-11am EDT data (the 11am report window)
+    start_time_utc = datetime(2025, 9, 12, 13, 0, 0, tzinfo=timezone.utc)  # 9am EDT
+    end_time_utc = datetime(2025, 9, 12, 15, 0, 0, tzinfo=timezone.utc)    # 11am EDT
     
-    print(f"📅 Fetching data for 9am-11am EDT on 09/12/2025")
+    # Fetch daily data (from 9am EDT today)
+    daily_start_utc = datetime(2025, 9, 12, 13, 0, 0, tzinfo=timezone.utc)  # 9am EDT
+    
+    print(f"📅 Fetching 9am-11am EDT data for 11am report")
     print(f"⏰ Start time (UTC): {start_time_utc}")
     print(f"⏰ End time (UTC): {end_time_utc}")
-    print(f"🌍 Timezone: Eastern Daylight Time (EDT) - UTC-4")
     print()
     
-    # Fetch correct data
-    metrics = await fetch_correct_1pm_3pm_data(start_time_utc, end_time_utc)
+    # Fetch data
+    metrics_2hour = await fetch_ringba_data(start_time_utc, end_time_utc)
+    metrics_daily = await fetch_ringba_data(daily_start_utc, end_time_utc)
     
-    if metrics:
-        print(f"📊 Fetched {len(metrics)} publishers")
+    if metrics_2hour or metrics_daily:
+        print(f"📊 Fetched {len(metrics_2hour)} 2-hour metrics, {len(metrics_daily)} daily metrics")
         
         # Show summary
-        totals = calculate_totals(metrics)
-        print(f"📈 TOTALS: {totals.incoming} calls, {totals.completed} completed, ${totals.payout:.2f} payout, ${totals.cpa:.2f} CPA")
-        print()
+        if metrics_2hour:
+            totals_2hour = calculate_totals(metrics_2hour)
+            print(f"📈 2-HOUR TOTALS: {totals_2hour.completed} completed, ${totals_2hour.payout:.2f} payout, ${totals_2hour.cpa:.2f} CPA")
         
-        # Show data summary
-        print(f"✅ Data fetched successfully for 9am-11am EDT on 09/12/2025")
+        if metrics_daily:
+            totals_daily = calculate_totals(metrics_daily)
+            print(f"📈 DAILY TOTALS: {totals_daily.completed} completed, ${totals_daily.payout:.2f} payout, ${totals_daily.cpa:.2f} CPA")
         
         # Send to Slack
-        print("📱 Sending RESEND data to Slack...")
-        await send_correct_slack_summary(metrics, start_time_utc, end_time_utc)
-        print("✅ RESEND report sent successfully!")
+        print("\n📱 Sending 11am report to Slack...")
+        await send_11am_report(metrics_2hour, metrics_daily, start_time_utc, end_time_utc, daily_start_utc)
+        print("✅ 11am report resent successfully!")
     else:
-        print("⚠️  No data found for 9am-11am EDT on 09/12/2025")
+        print("⚠️  No data found for 9am-11am EDT")
 
 if __name__ == "__main__":
     asyncio.run(main())

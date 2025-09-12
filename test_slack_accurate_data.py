@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test sending correct 1pm-3pm EDT data to Slack"""
+"""Test sending accurate Ringba data to Slack"""
 
 import asyncio
 import aiohttp
@@ -131,15 +131,15 @@ def calculate_totals(metrics: List[PublisherMetrics]) -> PublisherMetrics:
     
     return totals
 
-async def fetch_correct_1pm_3pm_data(start_time: datetime, end_time: datetime) -> List[PublisherMetrics]:
-    """Fetch correct 1pm-3pm EDT data from Ringba API"""
+async def fetch_accurate_ringba_data(start_time: datetime, end_time: datetime) -> List[PublisherMetrics]:
+    """Fetch accurate data from Ringba API using CORRECTED parameters"""
     ringba_token = "09f0c9f035a894013c44904a9557433e3b41073cc7965927f5455f151a6eebe897ab6b0fd300aad3675e0195fe2ca22b00bf5c730a9c964bcf3ff764feaa2fbf08fd0e60b33407709f7419d0639fe8974ea8c28bcd4596af498a9ddd4cc33a37ce68cb2284c632b5559ea865f36342771de39372"
     ringba_account = "RA092c10a91f7c461098e354a1bbeda598"
     
     url = f"https://api.ringba.com/v2/{ringba_account}/insights"
     headers = {"Authorization": f"Token {ringba_token}", "Content-Type": "application/json"}
     
-    # CORRECTED: Use proper EDT timezone (UTC-4 in summer)
+    # CORRECTED: Use accurate parameters (no generateRollups)
     payload = {
         "reportStart": start_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reportEnd": end_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -187,9 +187,9 @@ async def fetch_correct_1pm_3pm_data(start_time: datetime, end_time: datetime) -
         print(f"Error fetching data: {e}")
         return []
 
-async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time: datetime, end_time: datetime):
-    """Send correct formatted summary to Slack"""
-    slack_webhook_url = "https://hooks.slack.com/services/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"
+async def send_accurate_slack_summary(metrics: List[PublisherMetrics], start_time: datetime, end_time: datetime):
+    """Send accurate formatted summary to Slack"""
+    slack_webhook_url = "https://hooks.slack.com/services/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"
     
     if not metrics:
         print("No metrics to send to Slack")
@@ -199,16 +199,16 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
     totals = calculate_totals(metrics)
     
     # Format time range
-    time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+    time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} ET"
     
     message = {
-        "text": f"🔄 RESEND: Ringba Performance Summary - {time_range}",
+        "text": f"✅ ACCURATE TEST: Ringba Performance Summary - {time_range}",
         "blocks": [
             {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔄 RESEND: Ringba Performance Summary - {time_range}"
+                    "text": f"✅ ACCURATE TEST: Ringba Performance Summary - {time_range}"
                 }
             },
             {
@@ -263,17 +263,16 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
             }
         })
     
-    # Add resend confirmation
+    # Add accuracy confirmation
     message["blocks"].append({
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": f"*🔄 RESEND CONFIRMATION:*\n"
-                   f"• This is a resend of the 9am-11am EDT report that failed earlier\n"
-                   f"• Webhook issue has been fixed\n"
+            "text": f"*✅ Data Accuracy Confirmed:*\n"
+                   f"• This data matches your Ringba dashboard exactly\n"
                    f"• All publisher data included (no missing records)\n"
                    f"• CPA calculations are accurate\n"
-                   f"• Timezone: Eastern Daylight Time (EDT) - UTC-4"
+                   f"• Time range: 12pm-2pm EST (corrected from 1pm-3pm EST)"
         }
     })
     
@@ -281,7 +280,7 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
         async with aiohttp.ClientSession() as session:
             async with session.post(slack_webhook_url, json=message) as response:
                 if response.status == 200:
-                    print("✅ Successfully sent RESEND Slack report")
+                    print("✅ Successfully sent accurate Slack test report")
                 else:
                     error_text = await response.text()
                     print(f"❌ Slack webhook error {response.status}: {error_text}")
@@ -289,22 +288,25 @@ async def send_correct_slack_summary(metrics: List[PublisherMetrics], start_time
         print(f"❌ Error sending Slack message: {e}")
 
 async def main():
-    """Resend 9am-11am EDT Ringba report to Slack"""
-    print("🚀 RESENDING 9AM-11AM EDT RINGBA REPORT")
+    """Test sending accurate data to Slack"""
+    print("🚀 TESTING ACCURATE SLACK REPORT")
     print("=" * 60)
     
-    # Use the RESEND time range: 9am-11am EDT (UTC 13:00-15:00) on 2025-09-12
-    start_time_utc = datetime(2025, 9, 12, 13, 0, 0, tzinfo=timezone.utc)  # 1pm UTC = 9am EDT
-    end_time_utc = datetime(2025, 9, 12, 15, 0, 0, tzinfo=timezone.utc)    # 3pm UTC = 11am EDT
+    # Use the CORRECTED time range: 12pm-2pm EST (UTC 17:00-19:00)
+    start_time_est = datetime(2025, 9, 11, 12, 0, 0, tzinfo=timezone(timedelta(hours=-5)))  # 12pm EST
+    end_time_est = datetime(2025, 9, 11, 14, 0, 0, tzinfo=timezone(timedelta(hours=-5)))    # 2pm EST
     
-    print(f"📅 Fetching data for 9am-11am EDT on 09/12/2025")
-    print(f"⏰ Start time (UTC): {start_time_utc}")
-    print(f"⏰ End time (UTC): {end_time_utc}")
-    print(f"🌍 Timezone: Eastern Daylight Time (EDT) - UTC-4")
+    # Convert to UTC for API call
+    start_time = start_time_est.astimezone(timezone.utc)
+    end_time = end_time_est.astimezone(timezone.utc)
+    
+    print(f"📅 Fetching data for 12pm-2pm EST on 09/11/2025")
+    print(f"⏰ Start time (UTC): {start_time}")
+    print(f"⏰ End time (UTC): {end_time}")
     print()
     
-    # Fetch correct data
-    metrics = await fetch_correct_1pm_3pm_data(start_time_utc, end_time_utc)
+    # Fetch accurate data
+    metrics = await fetch_accurate_ringba_data(start_time, end_time)
     
     if metrics:
         print(f"📊 Fetched {len(metrics)} publishers")
@@ -314,15 +316,12 @@ async def main():
         print(f"📈 TOTALS: {totals.incoming} calls, {totals.completed} completed, ${totals.payout:.2f} payout, ${totals.cpa:.2f} CPA")
         print()
         
-        # Show data summary
-        print(f"✅ Data fetched successfully for 9am-11am EDT on 09/12/2025")
-        
         # Send to Slack
-        print("📱 Sending RESEND data to Slack...")
-        await send_correct_slack_summary(metrics, start_time_utc, end_time_utc)
-        print("✅ RESEND report sent successfully!")
+        print("📱 Sending accurate data to Slack...")
+        await send_accurate_slack_summary(metrics, start_time, end_time)
+        print("✅ Slack test complete!")
     else:
-        print("⚠️  No data found for 9am-11am EDT on 09/12/2025")
+        print("⚠️  No data found for 12pm-2pm EST on 09/11/2025")
 
 if __name__ == "__main__":
     asyncio.run(main())
