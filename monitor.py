@@ -392,10 +392,9 @@ class RingbaMonitor:
         totals_2hour = self.calculate_totals(metrics_2hour) if metrics_2hour else PublisherMetrics(publisher_name="TOTALS")
         totals_daily = self.calculate_totals(metrics_daily) if metrics_daily else PublisherMetrics(publisher_name="TOTALS")
         
-        # Format time range (show original end time without buffer in display)
-        original_end_time = (end_time - timedelta(minutes=5)).astimezone(timezone(timedelta(hours=-4)))
-        time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {original_end_time.strftime('%Y-%m-%d %H:%M')} EDT"
-        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {original_end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+        # Format time range
+        time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
         
         message = {
             "text": f"📊 Ringba Performance Summary - {time_range}",
@@ -650,9 +649,9 @@ class RingbaMonitor:
                 end_time_est = est_now.replace(hour=15, minute=0, second=0, microsecond=0)
                 report_type = "2-hour"
             elif current_hour >= 17 and current_hour < 19:  # 5pm-7pm EDT
-                # Report on 3pm-5pm data
+                # Report on 3pm-5pm data (with 5-minute buffer)
                 start_time_est = est_now.replace(hour=15, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=17, minute=0, second=0, microsecond=0)
+                end_time_est = est_now.replace(hour=17, minute=5, second=0, microsecond=0)  # 5:05pm EDT
                 report_type = "2-hour"
             elif current_hour >= 19 and current_hour < 21:  # 7pm-9pm EDT
                 # Report on 5pm-7pm data
@@ -671,8 +670,7 @@ class RingbaMonitor:
             
             # Convert to UTC for API call
             start_time = start_time_est.astimezone(timezone.utc)
-            # Add 5-minute buffer to end time to ensure all data is captured
-            end_time = (end_time_est + timedelta(minutes=5)).astimezone(timezone.utc)
+            end_time = end_time_est.astimezone(timezone.utc)
             
             # Calculate daily range (from 9am EDT today)
             daily_start_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
@@ -680,7 +678,7 @@ class RingbaMonitor:
             
             logger.info(f"Current EDT time: {est_now}")
             logger.info(f"Report type: {report_type}")
-            logger.info(f"Fetching 2-hour data for {start_time} to {end_time} (with 5-minute buffer)")
+            logger.info(f"Fetching 2-hour data for {start_time} to {end_time}")
             logger.info(f"Fetching daily data for {daily_start_utc} to {end_time}")
             
             # Fetch both 2-hour and daily data
@@ -727,13 +725,14 @@ class RingbaMonitor:
         now_utc = datetime.now(timezone.utc)
         edt = now_utc.astimezone(timezone(timedelta(hours=-4)))
         
-        # Define report times: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EDT
+        # Define report times: 11am, 1pm, 3pm, 5:05pm, 7pm, 9pm EDT (5:05pm for buffer)
         report_hours = [11, 13, 15, 17, 19, 21]
+        report_minutes = [0, 0, 0, 5, 0, 0]  # 5:05pm for 5pm report
         
         # Find next report time today
-        for hour in report_hours:
-            if edt.hour < hour:
-                next_time_edt = edt.replace(hour=hour, minute=0, second=0, microsecond=0)
+        for i, hour in enumerate(report_hours):
+            if edt.hour < hour or (edt.hour == hour and edt.minute < report_minutes[i]):
+                next_time_edt = edt.replace(hour=hour, minute=report_minutes[i], second=0, microsecond=0)
                 return next_time_edt.astimezone(timezone.utc)
         
         # If past 9pm today, start tomorrow at 11am EDT
