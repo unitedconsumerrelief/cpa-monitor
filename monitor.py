@@ -258,18 +258,18 @@ class RingbaMonitor:
         # Process each row
         for index, row in df.iterrows():
             try:
-                # Get publisher from column Q (index 16)
-                publisher = str(row.iloc[16]) if len(row) > 16 else "Not Found"
+                # Get publisher from Lookup_Publisher column
+                publisher = str(row['Lookup_Publisher']) if 'Lookup_Publisher' in row else "Not Found"
                 
                 # Skip if publisher is "Not Found" or empty
                 if publisher == "Not Found" or publisher == "nan" or publisher.strip() == "":
                     continue
                 
-                # Get date from column R (index 17)
-                date_str = str(row.iloc[17]) if len(row) > 17 else ""
+                # Get date from Date column
+                date_str = str(row['Date']) if 'Date' in row else ""
                 
-                # Get time from column S (index 18)
-                time_str = str(row.iloc[18]) if len(row) > 18 else ""
+                # Get time from Time column
+                time_str = str(row['Time']) if 'Time' in row else ""
                 
                 # Skip if no date or time
                 if date_str == "nan" or time_str == "nan" or date_str.strip() == "" or time_str.strip() == "":
