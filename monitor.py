@@ -36,6 +36,9 @@ class PublisherMetrics:
     tcl_seconds: int = 0
     acl_seconds: int = 0
     total_cost: float = 0.0
+    # New fields for accurate CPA calculation
+    sales_count: int = 0
+    accurate_cpa: float = 0.0
 
     @property
     def cpa(self) -> float:
@@ -50,6 +53,12 @@ class PublisherMetrics:
         minutes = (self.tcl_seconds % 3600) // 60
         seconds = self.tcl_seconds % 60
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    def calculate_accurate_cpa(self, sales_count: int) -> float:
+        """Calculate accurate CPA: Payout / Sales Count"""
+        if sales_count == 0:
+            return 0.0
+        return self.payout / sales_count
 
     def format_acl(self) -> str:
         """Format ACL in HH:MM:SS"""
@@ -63,6 +72,8 @@ class RingbaMonitor:
         self.ringba_api_token = os.getenv("RINGBA_API_TOKEN")
         self.slack_webhook_url = os.getenv("SLACK_WEBHOOK_URL")
         self.ringba_account_id = os.getenv("RINGBA_ACCOUNT_ID", "RA092c10a91f7c461098e354a1bbeda598")
+        # TODO: Add Google Sheets credentials
+        self.sheets_service = None
 
     async def fetch_ringba_data(self, start_time: datetime, end_time: datetime) -> List[PublisherMetrics]:
         """Fetch data from Ringba API"""
@@ -199,6 +210,118 @@ class RingbaMonitor:
             
         return metrics_list
 
+    async def get_sales_from_spreadsheet(self, start_time: datetime, end_time: datetime) -> Dict[str, int]:
+        """Get sales count per publisher from Google Sheets for the given time range"""
+        # Convert to EDT for spreadsheet comparison
+        start_edt = start_time.astimezone(timezone(timedelta(hours=-4)))
+        end_edt = end_time.astimezone(timezone(timedelta(hours=-4)))
+        
+        logger.info(f"📊 Checking Google Sheets for sales between {start_edt} and {end_edt} EDT")
+        
+        try:
+            # Try to read the sheet as CSV (if it's publicly accessible)
+            spreadsheet_id = "1yPWM2CIjPcAg1pF7xNUDmt22kbS2qrKqsOgWkIJzd9I"
+            csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid=0"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(csv_url) as response:
+                    if response.status == 200:
+                        csv_content = await response.text()
+                        
+                        # Parse CSV
+                        import pandas as pd
+                        from io import StringIO
+                        df = pd.read_csv(StringIO(csv_content))
+                        
+                        # Process the data
+                        sales_data = self._process_spreadsheet_data(df, start_edt, end_edt)
+                        
+                        logger.info(f"📈 Sales found: {sales_data}")
+                        return sales_data
+                    else:
+                        logger.warning(f"Could not access spreadsheet: {response.status}")
+                        return self._get_mock_sales_data()
+                        
+        except Exception as e:
+            logger.error(f"Error reading spreadsheet: {e}")
+            logger.info("Falling back to mock data")
+            return self._get_mock_sales_data()
+    
+    def _process_spreadsheet_data(self, df, start_edt: datetime, end_edt: datetime) -> Dict[str, int]:
+        """Process the spreadsheet data to count sales per publisher"""
+        sales_data = {}
+        
+        # Note: We don't pre-initialize publishers here anymore
+        # The enhance_metrics_with_accurate_cpa method will handle all Ringba publishers
+        # and this function will only return publishers that have actual sales data
+        
+        # Process each row
+        for index, row in df.iterrows():
+            try:
+                # Get publisher from column Q (index 16)
+                publisher = str(row.iloc[16]) if len(row) > 16 else "Not Found"
+                
+                # Skip if publisher is "Not Found" or empty
+                if publisher == "Not Found" or publisher == "nan" or publisher.strip() == "":
+                    continue
+                
+                # Get date from column R (index 17)
+                date_str = str(row.iloc[17]) if len(row) > 17 else ""
+                
+                # Get time from column S (index 18)
+                time_str = str(row.iloc[18]) if len(row) > 18 else ""
+                
+                # Skip if no date or time
+                if date_str == "nan" or time_str == "nan" or date_str.strip() == "" or time_str.strip() == "":
+                    continue
+                
+                # Parse date and time
+                try:
+                    # Parse date (format: 8/5/2025)
+                    date_parts = date_str.split('/')
+                    if len(date_parts) == 3:
+                        month, day, year = date_parts
+                        sale_date = datetime(int(year), int(month), int(day))
+                        
+                        # Parse time (format: 3:00:30 PM)
+                        if ':' in time_str:
+                            time_parts = time_str.split(':')
+                            if len(time_parts) >= 2:
+                                hour = int(time_parts[0])
+                                minute = int(time_parts[1])
+                                
+                                # Handle AM/PM
+                                if 'PM' in time_str and hour != 12:
+                                    hour += 12
+                                elif 'AM' in time_str and hour == 12:
+                                    hour = 0
+                                
+                                sale_time = datetime.combine(sale_date, datetime.min.time().replace(hour=hour, minute=minute))
+                                # Make timezone aware (EDT)
+                                sale_time = sale_time.replace(tzinfo=timezone(timedelta(hours=-4)))
+                                
+                                # Check if sale is within time range
+                                if start_edt <= sale_time <= end_edt:
+                                    # Add to sales data (initialize if not exists)
+                                    if publisher not in sales_data:
+                                        sales_data[publisher] = 0
+                                    sales_data[publisher] += 1
+                                        
+                except Exception as e:
+                    logger.warning(f"Error parsing date/time for row {index}: {e}")
+                    continue
+                    
+            except Exception as e:
+                logger.warning(f"Error processing row {index}: {e}")
+                continue
+        
+        return sales_data
+    
+    def _get_mock_sales_data(self) -> Dict[str, int]:
+        """Return empty sales data when spreadsheet is not accessible"""
+        # Return empty dictionary - all publishers will show 0 sales and $0.00 accurate CPA
+        return {}
+
     def calculate_totals(self, metrics: List[PublisherMetrics]) -> PublisherMetrics:
         """Calculate totals across all publishers"""
         totals = PublisherMetrics(publisher_name="TOTALS")
@@ -220,12 +343,43 @@ class RingbaMonitor:
             totals.profit += metric.profit
             totals.total_cost += metric.total_cost
             totals.tcl_seconds += metric.tcl_seconds
+            totals.sales_count += metric.sales_count
         
         # Calculate overall conversion percentage
         if totals.incoming > 0:
             totals.conversion_percent = (totals.converted / totals.incoming) * 100
         
+        # Calculate overall accurate CPA
+        if totals.sales_count > 0:
+            totals.accurate_cpa = totals.payout / totals.sales_count
+        else:
+            totals.accurate_cpa = 0.0
+        
         return totals
+
+    async def enhance_metrics_with_accurate_cpa(self, metrics: List[PublisherMetrics], 
+                                               start_time: datetime, end_time: datetime) -> List[PublisherMetrics]:
+        """Enhance metrics with accurate CPA calculation using spreadsheet sales data"""
+        # Get sales data from spreadsheet
+        sales_data = await self.get_sales_from_spreadsheet(start_time, end_time)
+        
+        # Calculate accurate CPA for each metric
+        for metric in metrics:
+            # Get sales count from spreadsheet (0 if not found)
+            sales_count = sales_data.get(metric.publisher_name, 0)
+            metric.sales_count = sales_count
+            
+            # Calculate accurate CPA
+            if sales_count > 0:
+                # Publisher has sales data from spreadsheet
+                metric.accurate_cpa = metric.calculate_accurate_cpa(sales_count)
+                logger.info(f"📊 {metric.publisher_name}: {sales_count} sales, ${metric.accurate_cpa:.2f} accurate CPA")
+            else:
+                # Publisher has no sales data from spreadsheet
+                metric.accurate_cpa = 0.0
+                logger.info(f"📊 {metric.publisher_name}: 0 sales, $0.00 accurate CPA")
+        
+        return metrics
 
     async def send_slack_summary(self, metrics_2hour: List[PublisherMetrics], metrics_daily: List[PublisherMetrics], 
                                 start_time: datetime, end_time: datetime, daily_start_time: datetime):
@@ -259,7 +413,7 @@ class RingbaMonitor:
                         "text": f"*Last 2 Hours ({time_range})*\n"
                                f"• *Completed Calls:* {totals_2hour.completed:,}\n"
                                f"• *Revenue:* ${totals_2hour.revenue:,.2f}\n"
-                               f"• *CPA:* ${totals_2hour.cpa:.2f}\n"
+                               f"• *CPA:* ${totals_2hour.accurate_cpa:.2f}\n"
                                f"• *Profit:* ${totals_2hour.profit:,.2f}\n"
                                f"• *Conversion Rate:* {totals_2hour.conversion_percent:.1f}%"
                     }
@@ -271,7 +425,7 @@ class RingbaMonitor:
                         "text": f"*Daily Total ({daily_range})*\n"
                                f"• *Completed Calls:* {totals_daily.completed:,}\n"
                                f"• *Revenue:* ${totals_daily.revenue:,.2f}\n"
-                               f"• *CPA:* ${totals_daily.cpa:.2f}\n"
+                               f"• *CPA:* ${totals_daily.accurate_cpa:.2f}\n"
                                f"• *Profit:* ${totals_daily.profit:,.2f}\n"
                                f"• *Conversion Rate:* {totals_daily.conversion_percent:.1f}%"
                     }
@@ -284,7 +438,7 @@ class RingbaMonitor:
             top_performers = sorted(metrics_2hour, key=lambda x: x.completed, reverse=True)[:5]
             performers_text = "*🏆 Top 5 Publishers by Completed Calls (Last 2 Hours):*\n"
             for i, metric in enumerate(top_performers, 1):
-                performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.cpa:.2f} CPA\n"
+                performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.accurate_cpa:.2f} CPA\n"
             
             message["blocks"].append({
                 "type": "section",
@@ -298,11 +452,11 @@ class RingbaMonitor:
         if metrics_2hour:
             table_text = "*📋 ALL Publishers Performance (Last 2 Hours):*\n"
             table_text += "```\n"
-            table_text += f"{'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Profit':<10}\n"
+            table_text += f"{'Publisher':<20} {'Completed':<10} {'Sales':<6} {'Accurate CPA':<12} {'Revenue':<10} {'Profit':<10}\n"
             table_text += "-" * 70 + "\n"
             
             for metric in sorted(metrics_2hour, key=lambda x: x.completed, reverse=True):
-                table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
+                table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} {metric.sales_count:<6} ${metric.accurate_cpa:<11.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
             
             table_text += "```"
             
@@ -318,11 +472,11 @@ class RingbaMonitor:
         if metrics_daily:
             daily_table_text = "*📋 ALL Publishers Performance (Daily Accumulated):*\n"
             daily_table_text += "```\n"
-            daily_table_text += f"{'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Profit':<10}\n"
+            daily_table_text += f"{'Publisher':<20} {'Completed':<10} {'Sales':<6} {'Accurate CPA':<12} {'Revenue':<10} {'Profit':<10}\n"
             daily_table_text += "-" * 70 + "\n"
             
             for metric in sorted(metrics_daily, key=lambda x: x.completed, reverse=True):
-                daily_table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
+                daily_table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} {metric.sales_count:<6} ${metric.accurate_cpa:<11.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
             
             daily_table_text += "```"
             
@@ -378,7 +532,7 @@ class RingbaMonitor:
                                f"• *Revenue:* ${totals_daily.revenue:,.2f}\n"
                                f"• *Payout:* ${totals_daily.payout:,.2f}\n"
                                f"• *Profit:* ${totals_daily.profit:,.2f}\n"
-                               f"• *Overall CPA:* ${totals_daily.cpa:.2f}\n"
+                               f"• *Overall CPA:* ${totals_daily.accurate_cpa:.2f}\n"
                                f"• *Conversion Rate:* {totals_daily.conversion_percent:.1f}%"
                     }
                 }
@@ -390,7 +544,7 @@ class RingbaMonitor:
             top_performers = sorted(metrics_daily, key=lambda x: x.completed, reverse=True)[:5]
             performers_text = "*🏆 Top 5 Publishers by Completed Calls (Daily):*\n"
             for i, metric in enumerate(top_performers, 1):
-                performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.cpa:.2f} CPA\n"
+                performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.accurate_cpa:.2f} CPA\n"
             
             message["blocks"].append({
                 "type": "section",
@@ -533,6 +687,12 @@ class RingbaMonitor:
             
             if metrics_2hour or metrics_daily:
                 logger.info(f"Fetched {len(metrics_2hour)} 2-hour metrics, {len(metrics_daily)} daily metrics")
+                
+                # Enhance metrics with accurate CPA calculation
+                if metrics_2hour:
+                    metrics_2hour = await self.enhance_metrics_with_accurate_cpa(metrics_2hour, start_time, end_time)
+                if metrics_daily:
+                    metrics_daily = await self.enhance_metrics_with_accurate_cpa(metrics_daily, daily_start_utc, end_time)
                 
                 if report_type == "end-of-day":
                     # Send end-of-day report
