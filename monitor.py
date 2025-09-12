@@ -228,13 +228,14 @@ class RingbaMonitor:
                     if response.status == 200:
                         csv_content = await response.text()
                         
-                        # Parse CSV
-                        import pandas as pd
+                        # Parse CSV without pandas
+                        import csv
                         from io import StringIO
-                        df = pd.read_csv(StringIO(csv_content))
+                        csv_reader = csv.DictReader(StringIO(csv_content))
+                        rows = list(csv_reader)
                         
                         # Process the data
-                        sales_data = self._process_spreadsheet_data(df, start_edt, end_edt)
+                        sales_data = self._process_spreadsheet_data(rows, start_edt, end_edt)
                         
                         logger.info(f"📈 Sales found: {sales_data}")
                         return sales_data
@@ -247,7 +248,7 @@ class RingbaMonitor:
             logger.info("Falling back to mock data")
             return self._get_mock_sales_data()
     
-    def _process_spreadsheet_data(self, df, start_edt: datetime, end_edt: datetime) -> Dict[str, int]:
+    def _process_spreadsheet_data(self, rows, start_edt: datetime, end_edt: datetime) -> Dict[str, int]:
         """Process the spreadsheet data to count sales per publisher"""
         sales_data = {}
         
@@ -256,7 +257,7 @@ class RingbaMonitor:
         # and this function will only return publishers that have actual sales data
         
         # Process each row
-        for index, row in df.iterrows():
+        for index, row in enumerate(rows):
             try:
                 # Get publisher from Lookup_Publisher column
                 publisher = str(row['Lookup_Publisher']) if 'Lookup_Publisher' in row else "Not Found"
