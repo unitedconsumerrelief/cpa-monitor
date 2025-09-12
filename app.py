@@ -308,14 +308,8 @@ async def ringba_webhook(request: Request):
         # Log call details
         logger.info(f"📞 PROCESSING CALL: ID={call_id}, Caller={caller_id}, Campaign={campaign_name or campaign_id}, Publisher={body.get('publisherName', 'Unknown')}")
         
-        # Check if RINGBA_CAMPAIGNS filtering is active
-        if RINGBA_CAMPAIGNS:
-            logger.info(f"🔍 CAMPAIGN FILTERING ACTIVE: {RINGBA_CAMPAIGNS}")
-            if campaign_name not in RINGBA_CAMPAIGNS and campaign_id not in RINGBA_CAMPAIGNS:
-                logger.warning(f"🚫 Call filtered out by campaign: {call_id} (Campaign: {campaign_name or campaign_id})")
-                return {"status": "filtered"}
-        else:
-            logger.info("✅ No campaign filtering - accepting all calls")
+        # Accept all calls - no campaign filtering
+        logger.info("✅ No campaign filtering - accepting all calls")
         
         # Prepare row data
         row = [
