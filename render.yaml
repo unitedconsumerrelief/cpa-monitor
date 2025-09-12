@@ -1,15 +1,15 @@
 services:
   - type: web
-    name: ringba-webhook
+    name: cpa-monitor
     env: python
     plan: free
     pythonVersion: 3.11.10
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    startCommand: python monitor.py
     envVars:
-      - key: RINGBA_CAMPAIGNS
+      - key: RINGBA_API_TOKEN
         sync: false
-      - key: GOOGLE_CREDENTIALS_JSON
+      - key: SLACK_WEBHOOK_URL
         sync: false
-      - key: MASTER_CPA_DATA
+      - key: RINGBA_ACCOUNT_ID
         sync: false

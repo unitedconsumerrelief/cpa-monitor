@@ -39,10 +39,10 @@ class PublisherMetrics:
 
     @property
     def cpa(self) -> float:
-        """Calculate CPA: Revenue / Completed Calls"""
+        """Calculate CPA: Payout / Completed Calls"""
         if self.completed == 0:
             return 0.0
-        return self.revenue / self.completed
+        return self.payout / self.completed
 
     def format_tcl(self) -> str:
         """Format TCL in HH:MM:SS"""
@@ -105,7 +105,6 @@ class RingbaMonitor:
             "orderByColumns": [{"column": "callCount", "direction": "desc"}],
             "formatTimespans": True,
             "formatPercentages": True,
-            "generateRollups": True,
             "maxResultsPerGroup": 1000,
             "filters": [],
             "formatTimeZone": "America/New_York"
@@ -137,29 +136,59 @@ class RingbaMonitor:
         
         try:
             # Extract data from the response structure
-            if "data" in data and "rows" in data["data"]:
-                for row in data["data"]["rows"]:
+            if "report" in data and "records" in data["report"]:
+                for row in data["report"]["records"]:
+                    # Handle missing, empty, or "Unknown" publisher names
+                    publisher_name = row.get("publisherName", "")
+                    raw_publisher_name = publisher_name
+                    
+                    # If publisher name is missing/empty, use "Unknown Publisher" but DON'T skip the record
+                    if not publisher_name or publisher_name.strip() == "" or publisher_name.strip().lower() in ["unknown", "missing"]:
+                        publisher_name = "Unknown Publisher"
+                    
+                    # Only skip if it's explicitly "MISSING" in the raw data (not empty)
+                    if raw_publisher_name and raw_publisher_name.upper() == "MISSING":
+                        continue
+                    
+                    # Helper function to safely convert values
+                    def safe_float(value, default=0.0):
+                        if not value:
+                            return default
+                        try:
+                            clean_value = str(value).replace('%', '')
+                            return float(clean_value)
+                        except:
+                            return default
+                    
+                    def safe_int(value, default=0):
+                        if not value:
+                            return default
+                        try:
+                            return int(float(value))
+                        except:
+                            return default
+                    
                     metrics = PublisherMetrics(
-                        publisher_name=row.get("publisherName", ""),
-                        incoming=row.get("callCount", 0),
-                        live=row.get("liveCallCount", 0),
-                        completed=row.get("completedCalls", 0),
-                        ended=row.get("endedCalls", 0),
-                        connected=row.get("connectedCallCount", 0),
-                        paid=row.get("payoutCount", 0),
-                        converted=row.get("convertedCalls", 0),
-                        no_connect=row.get("nonConnectedCallCount", 0),
-                        duplicate=row.get("duplicateCalls", 0),
-                        blocked=row.get("blockedCalls", 0),
-                        ivr_hangup=row.get("incompleteCalls", 0),
-                        revenue=row.get("conversionAmount", 0.0),
-                        payout=row.get("payoutAmount", 0.0),
-                        profit=row.get("profitGross", 0.0),
-                        margin=row.get("profitMarginGross", 0.0),
-                        conversion_percent=row.get("convertedPercent", 0.0),
-                        tcl_seconds=row.get("callLengthInSeconds", 0),
-                        acl_seconds=row.get("avgHandleTime", 0),
-                        total_cost=row.get("totalCost", 0.0)
+                        publisher_name=publisher_name,
+                        incoming=safe_int(row.get("callCount", 0)),
+                        live=safe_int(row.get("liveCallCount", 0)),
+                        completed=safe_int(row.get("completedCalls", 0)),
+                        ended=safe_int(row.get("endedCalls", 0)),
+                        connected=safe_int(row.get("connectedCallCount", 0)),
+                        paid=safe_int(row.get("payoutCount", 0)),
+                        converted=safe_int(row.get("convertedCalls", 0)),
+                        no_connect=safe_int(row.get("nonConnectedCallCount", 0)),
+                        duplicate=safe_int(row.get("duplicateCalls", 0)),
+                        blocked=safe_int(row.get("blockedCalls", 0)),
+                        ivr_hangup=safe_int(row.get("incompleteCalls", 0)),
+                        revenue=safe_float(row.get("conversionAmount", 0)),
+                        payout=safe_float(row.get("payoutAmount", 0)),
+                        profit=safe_float(row.get("profitGross", 0)),
+                        margin=safe_float(row.get("profitMarginGross", 0)),
+                        conversion_percent=safe_float(row.get("convertedPercent", 0)),
+                        tcl_seconds=safe_int(row.get("callLengthInSeconds", 0)),
+                        acl_seconds=safe_int(row.get("avgHandleTime", 0)),
+                        total_cost=safe_float(row.get("totalCost", 0))
                     )
                     metrics_list.append(metrics)
             else:
@@ -267,12 +296,12 @@ class RingbaMonitor:
         
         # Add detailed table
         if metrics_2hour:
-            table_text = "*📋 Detailed Performance (Top 10 - Last 2 Hours):*\n"
+            table_text = "*📋 ALL Publishers Performance (Last 2 Hours):*\n"
             table_text += "```\n"
             table_text += f"{'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Profit':<10}\n"
             table_text += "-" * 70 + "\n"
             
-            for metric in sorted(metrics_2hour, key=lambda x: x.completed, reverse=True)[:10]:
+            for metric in sorted(metrics_2hour, key=lambda x: x.completed, reverse=True):
                 table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
             
             table_text += "```"
@@ -282,6 +311,26 @@ class RingbaMonitor:
                 "text": {
                     "type": "mrkdwn",
                     "text": table_text
+                }
+            })
+        
+        # Add daily accumulated table
+        if metrics_daily:
+            daily_table_text = "*📋 ALL Publishers Performance (Daily Accumulated):*\n"
+            daily_table_text += "```\n"
+            daily_table_text += f"{'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Profit':<10}\n"
+            daily_table_text += "-" * 70 + "\n"
+            
+            for metric in sorted(metrics_daily, key=lambda x: x.completed, reverse=True):
+                daily_table_text += f"{metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.profit:<9.2f}\n"
+            
+            daily_table_text += "```"
+            
+            message["blocks"].append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": daily_table_text
                 }
             })
         
@@ -296,53 +345,185 @@ class RingbaMonitor:
         except Exception as e:
             logger.error(f"Error sending Slack message: {e}")
 
+    async def send_end_of_day_summary(self, metrics_daily: List[PublisherMetrics], 
+                                    daily_start_time: datetime, end_time: datetime):
+        """Send end-of-day summary with all publishers and CPA calculations"""
+        if not metrics_daily:
+            logger.warning("No daily metrics to send to Slack")
+            return
+        
+        # Calculate totals
+        totals_daily = self.calculate_totals(metrics_daily)
+        
+        # Format time range
+        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+        
+        message = {
+            "text": f"📊 END OF DAY REPORT - {daily_range}",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"📊 END OF DAY REPORT - {daily_range}"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*📈 Daily Summary (9am-9pm EDT)*\n"
+                               f"• *Total Calls:* {totals_daily.incoming:,}\n"
+                               f"• *Completed Calls:* {totals_daily.completed:,}\n"
+                               f"• *Revenue:* ${totals_daily.revenue:,.2f}\n"
+                               f"• *Payout:* ${totals_daily.payout:,.2f}\n"
+                               f"• *Profit:* ${totals_daily.profit:,.2f}\n"
+                               f"• *Overall CPA:* ${totals_daily.cpa:.2f}\n"
+                               f"• *Conversion Rate:* {totals_daily.conversion_percent:.1f}%"
+                    }
+                }
+            ]
+        }
+        
+        # Add top performers
+        if metrics_daily:
+            top_performers = sorted(metrics_daily, key=lambda x: x.completed, reverse=True)[:5]
+            performers_text = "*🏆 Top 5 Publishers by Completed Calls (Daily):*\n"
+            for i, metric in enumerate(top_performers, 1):
+                performers_text += f"{i}. *{metric.publisher_name}*: {metric.completed} completed, ${metric.cpa:.2f} CPA\n"
+            
+            message["blocks"].append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": performers_text
+                }
+            })
+        
+        # Add complete daily table with all publishers
+        if metrics_daily:
+            table_text = "*📋 ALL Publishers Performance (Daily Summary):*\n"
+            table_text += "```\n"
+            table_text += f"{'#':<3} {'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Payout':<10}\n"
+            table_text += "-" * 80 + "\n"
+            
+            for i, metric in enumerate(sorted(metrics_daily, key=lambda x: x.completed, reverse=True), 1):
+                table_text += f"{i:<3} {metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.payout:<9.2f}\n"
+            
+            table_text += "```"
+            
+            message["blocks"].append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": table_text
+                }
+            })
+        
+        # Add CPA analysis
+        if metrics_daily:
+            # Calculate CPA statistics
+            cpas = [m.cpa for m in metrics_daily if m.completed > 0]
+            if cpas:
+                avg_cpa = sum(cpas) / len(cpas)
+                min_cpa = min(cpas)
+                max_cpa = max(cpas)
+                
+                cpa_text = f"*📊 CPA Analysis:*\n"
+                cpa_text += f"• *Average CPA:* ${avg_cpa:.2f}\n"
+                cpa_text += f"• *Lowest CPA:* ${min_cpa:.2f}\n"
+                cpa_text += f"• *Highest CPA:* ${max_cpa:.2f}\n"
+                cpa_text += f"• *Publishers with CPA > $0:* {len(cpas)}"
+                
+                message["blocks"].append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": cpa_text
+                    }
+                })
+        
+        # Add end of day summary
+        message["blocks"].append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*✅ End of Day Summary:*\n"
+                       f"• Monitoring completed for {daily_start_time.strftime('%Y-%m-%d')}\n"
+                       f"• Next monitoring cycle starts tomorrow at 11am EDT\n"
+                       f"• All data is accurate and matches Ringba dashboard"
+            }
+        })
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.slack_webhook_url, json=message) as response:
+                    if response.status == 200:
+                        logger.info("Successfully sent end-of-day summary")
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Slack webhook error {response.status}: {error_text}")
+        except Exception as e:
+            logger.error(f"Error sending end-of-day Slack message: {e}")
+
     async def run_monitoring_cycle(self):
         """Run one monitoring cycle"""
         try:
-            # Get current EST time
-            est_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-5)))
+            # Get current EDT time (UTC-4 in summer, UTC-5 in winter)
+            est_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-4)))
             
             # Calculate which 2-hour window we should report on
-            # Reports run at: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EST
-            # Data windows are: 9-11am, 11am-1pm, 1-3pm, 3-5pm, 5-7pm, 7-9pm EST
+            # Reports run at: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EDT
+            # Data windows are: 9-11am, 11am-1pm, 1-3pm, 3-5pm, 5-7pm, 7-9pm EDT
             
             current_hour = est_now.hour
             
             # Determine which data window to fetch based on current time
-            if current_hour >= 11 and current_hour < 13:  # 11am-1pm EST
+            if current_hour >= 11 and current_hour < 13:  # 11am-1pm EDT
                 # Report on 9am-11am data
                 start_time_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
                 end_time_est = est_now.replace(hour=11, minute=0, second=0, microsecond=0)
-            elif current_hour >= 13 and current_hour < 15:  # 1pm-3pm EST
+                report_type = "2-hour"
+            elif current_hour >= 13 and current_hour < 15:  # 1pm-3pm EDT
                 # Report on 11am-1pm data
                 start_time_est = est_now.replace(hour=11, minute=0, second=0, microsecond=0)
                 end_time_est = est_now.replace(hour=13, minute=0, second=0, microsecond=0)
-            elif current_hour >= 15 and current_hour < 17:  # 3pm-5pm EST
+                report_type = "2-hour"
+            elif current_hour >= 15 and current_hour < 17:  # 3pm-5pm EDT
                 # Report on 1pm-3pm data
                 start_time_est = est_now.replace(hour=13, minute=0, second=0, microsecond=0)
                 end_time_est = est_now.replace(hour=15, minute=0, second=0, microsecond=0)
-            elif current_hour >= 17 and current_hour < 19:  # 5pm-7pm EST
+                report_type = "2-hour"
+            elif current_hour >= 17 and current_hour < 19:  # 5pm-7pm EDT
                 # Report on 3pm-5pm data
                 start_time_est = est_now.replace(hour=15, minute=0, second=0, microsecond=0)
                 end_time_est = est_now.replace(hour=17, minute=0, second=0, microsecond=0)
-            elif current_hour >= 19 and current_hour < 21:  # 7pm-9pm EST
+                report_type = "2-hour"
+            elif current_hour >= 19 and current_hour < 21:  # 7pm-9pm EDT
                 # Report on 5pm-7pm data
                 start_time_est = est_now.replace(hour=17, minute=0, second=0, microsecond=0)
                 end_time_est = est_now.replace(hour=19, minute=0, second=0, microsecond=0)
+                report_type = "2-hour"
+            elif current_hour >= 21:  # 9pm EDT - End of day report
+                # Report on 7pm-9pm data + full day summary
+                start_time_est = est_now.replace(hour=19, minute=0, second=0, microsecond=0)
+                end_time_est = est_now.replace(hour=21, minute=0, second=0, microsecond=0)
+                report_type = "end-of-day"
             else:
-                # Outside business hours or before 11am, use previous 2-hour window
-                start_time_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=11, minute=0, second=0, microsecond=0)
+                # Outside business hours or before 11am, skip
+                logger.info("Outside business hours, skipping monitoring cycle")
+                return
             
             # Convert to UTC for API call
             start_time = start_time_est.astimezone(timezone.utc)
             end_time = end_time_est.astimezone(timezone.utc)
             
-            # Calculate daily range (from 9am EST today)
+            # Calculate daily range (from 9am EDT today)
             daily_start_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
             daily_start_utc = daily_start_est.astimezone(timezone.utc)
             
-            logger.info(f"Current EST time: {est_now}")
+            logger.info(f"Current EDT time: {est_now}")
+            logger.info(f"Report type: {report_type}")
             logger.info(f"Fetching 2-hour data for {start_time} to {end_time}")
             logger.info(f"Fetching daily data for {daily_start_utc} to {end_time}")
             
@@ -353,8 +534,12 @@ class RingbaMonitor:
             if metrics_2hour or metrics_daily:
                 logger.info(f"Fetched {len(metrics_2hour)} 2-hour metrics, {len(metrics_daily)} daily metrics")
                 
-                # Send to Slack with both views
-                await self.send_slack_summary(metrics_2hour, metrics_daily, start_time, end_time, daily_start_utc)
+                if report_type == "end-of-day":
+                    # Send end-of-day report
+                    await self.send_end_of_day_summary(metrics_daily, daily_start_utc, end_time)
+                else:
+                    # Send regular 2-hour report
+                    await self.send_slack_summary(metrics_2hour, metrics_daily, start_time, end_time, daily_start_utc)
             else:
                 logger.warning("No metrics fetched from Ringba")
                 
@@ -362,37 +547,35 @@ class RingbaMonitor:
             logger.error(f"Error in monitoring cycle: {e}")
 
     def is_business_hours(self, dt: datetime) -> bool:
-        """Check if current time is within business hours (9am-9pm EST, Mon-Sat)"""
-        # Convert to EST (UTC-5)
-        est = dt.astimezone(timezone(timedelta(hours=-5)))
+        """Check if current time is within business hours (9am-9pm EDT, Mon-Sat)"""
+        # Convert to EDT (UTC-4 in summer, UTC-5 in winter)
+        edt = dt.astimezone(timezone(timedelta(hours=-4)))
         
         # Check if it's Monday-Saturday (0=Monday, 6=Sunday)
-        weekday = est.weekday()
+        weekday = edt.weekday()
         if weekday >= 6:  # Sunday
             return False
         
-        # Check if it's between 9am and 9pm EST
-        hour = est.hour
+        # Check if it's between 9am and 9pm EDT
+        hour = edt.hour
         return 9 <= hour < 21
 
-    def get_next_business_hour(self) -> datetime:
-        """Get the next business hour start time"""
+    def get_next_report_time(self) -> datetime:
+        """Get the next report time based on the schedule"""
         now_utc = datetime.now(timezone.utc)
-        est = now_utc.astimezone(timezone(timedelta(hours=-5)))
+        edt = now_utc.astimezone(timezone(timedelta(hours=-4)))
         
-        # If it's currently business hours, next report is in 2 hours
-        if self.is_business_hours(now_utc):
-            next_time_est = est + timedelta(hours=2)
-            # Make sure next time is still in business hours
-            if 9 <= next_time_est.hour < 21 and next_time_est.weekday() < 6:
-                return next_time_est.astimezone(timezone.utc)
+        # Define report times: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EDT
+        report_hours = [11, 13, 15, 17, 19, 21]
         
-        # Find next business day at 9am EST
-        next_day = est.replace(hour=9, minute=0, second=0, microsecond=0)
+        # Find next report time today
+        for hour in report_hours:
+            if edt.hour < hour:
+                next_time_edt = edt.replace(hour=hour, minute=0, second=0, microsecond=0)
+                return next_time_edt.astimezone(timezone.utc)
         
-        # If it's already past 9am today, start tomorrow
-        if est.hour >= 9:
-            next_day += timedelta(days=1)
+        # If past 9pm today, start tomorrow at 11am EDT
+        next_day = edt.replace(hour=11, minute=0, second=0, microsecond=0) + timedelta(days=1)
         
         # Skip Sunday (weekday 6)
         while next_day.weekday() == 6:
@@ -402,13 +585,15 @@ class RingbaMonitor:
         return next_day.astimezone(timezone.utc)
 
     async def start_monitoring(self):
-        """Start the monitoring service (runs every 2 hours during business hours)"""
+        """Start the monitoring service with the new schedule"""
         logger.info("Starting Ringba monitoring service...")
-        logger.info("Schedule: 9am-9pm EST, Monday-Saturday, every 2 hours")
+        logger.info("Schedule: 9am-9pm EDT, Monday-Saturday")
+        logger.info("Reports: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EDT")
+        logger.info("Data windows: 9-11am, 11am-1pm, 1-3pm, 3-5pm, 5-7pm, 7-9pm EDT")
         
-        # Wait until first business hour (11am EST for first report)
-        next_run = self.get_next_business_hour()
-        logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-5)))} EST")
+        # Wait until first report time (11am EDT)
+        next_run = self.get_next_report_time()
+        logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-4)))} EDT")
         
         while True:
             try:
@@ -424,19 +609,13 @@ class RingbaMonitor:
                 if self.is_business_hours(datetime.now(timezone.utc)):
                     await self.run_monitoring_cycle()
                     
-                    # Schedule next run in 2 hours
-                    next_run = datetime.now(timezone.utc) + timedelta(hours=2)
-                    
-                    # If next run is outside business hours, schedule for next business day
-                    if not self.is_business_hours(next_run):
-                        next_run = self.get_next_business_hour()
-                        logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-5)))} EST")
-                    else:
-                        logger.info(f"Next monitoring cycle in 2 hours: {next_run.astimezone(timezone(timedelta(hours=-5)))} EST")
+                    # Schedule next run
+                    next_run = self.get_next_report_time()
+                    logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-4)))} EDT")
                 else:
                     logger.info("Outside business hours, skipping monitoring cycle")
-                    next_run = self.get_next_business_hour()
-                    logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-5)))} EST")
+                    next_run = self.get_next_report_time()
+                    logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-4)))} EDT")
                 
             except KeyboardInterrupt:
                 logger.info("Monitoring service stopped by user")

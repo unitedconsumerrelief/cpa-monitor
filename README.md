@@ -1,87 +1,68 @@
-# Ringba Webhook to Google Sheets
+# CPA Monitor
 
-A FastAPI webhook service that receives Ringba call events and writes them to a Google Sheet with deduplication and background processing.
+Automated Ringba performance monitoring system that tracks CPA and sends summaries to Slack during business hours (9am-8pm EST, Monday-Saturday).
 
 ## Features
 
-- **POST /ringba-webhook**: Receives Ringba call events
-- **POST /admin/refresh-map**: Builds DID→Publisher mapping
-- **GET /healthz**: Health check endpoint
-- Security via webhook and admin secrets
-- DID normalization (last 10 digits)
-- Campaign filtering
-- SQLite deduplication
-- Background batch writing to Google Sheets
-- Real-time DID cache maintenance
+- 🕐 **Business Hours Monitoring**: Runs 9am-8pm EST, Monday-Saturday
+- 📊 **Dual View Reports**: Shows both 2-hour and daily accumulated data
+- 💰 **CPA Calculation**: Revenue ÷ Completed Calls
+- 📱 **Slack Integration**: Rich formatted summaries
+- 📈 **Performance Tracking**: All Ringba dashboard metrics
+- 🏆 **Top Performers**: Highlights best publishers
+- ⏰ **Smart Scheduling**: First report at 11am EST, then every 2 hours
 
-## Setup
+## Quick Start
 
-### Environment Variables
+1. **Set Environment Variables:**
+   ```bash
+   RINGBA_API_TOKEN=your_ringba_api_token
+   SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+   ```
 
-Set the following environment variables:
+2. **Install Dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-- `WEBHOOK_SECRET`: Secret for webhook authentication
-- `ADMIN_SECRET`: Secret for admin endpoints
-- `RINGBA_CAMPAIGNS`: Comma-separated list of allowed campaigns (optional)
-- `GOOGLE_CREDENTIALS_JSON`: Google service account credentials as JSON string
-- `MASTER_CPA_DATA`: Google Sheet ID or full URL
-
-### Google Sheets Setup
-
-1. Create a Google Sheet with the following tabs:
-   - "Ringba Raw" (will be created automatically)
-   - "Real Time" (contains normalized DIDs)
-   - "DID Publisher Map" (created by admin endpoint)
-   - "Publisher DID Counts" (created by admin endpoint)
-
-2. Create a Google Cloud service account:
-   - Go to Google Cloud Console
-   - Create a new project or select existing
-   - Enable Google Sheets API
-   - Create a service account
-   - Download the JSON credentials
-   - Share your Google Sheet with the service account email
-
-### Installation
-
-```bash
-pip install -r requirements.txt
-python app.py
-```
-
-## API Endpoints
-
-### POST /ringba-webhook
-
-Receives Ringba call events. Requires authentication via:
-- Query parameter: `?secret=YOUR_WEBHOOK_SECRET`
-- Header: `X-Webhook-Secret: YOUR_WEBHOOK_SECRET`
-
-### POST /admin/refresh-map
-
-Builds DID→Publisher mapping. Requires authentication via:
-- Header: `X-Admin-Secret: YOUR_ADMIN_SECRET`
-
-### GET /healthz
-
-Returns health status and realtime DID count.
+3. **Run Monitor:**
+   ```bash
+   python monitor.py
+   ```
 
 ## Deployment
 
 ### Render.com
+1. Connect this repository to Render
+2. Set environment variables in Render dashboard
+3. Deploy - it will run automatically
 
-Use the provided `render.yaml` for easy deployment on Render.com.
+### Local/Other
+```bash
+python start_monitor.py
+```
 
-### Other Platforms
+## Files
 
-The app runs on any platform that supports Python and can set environment variables.
+- `monitor.py` - Main monitoring system
+- `test_monitor.py` - Test script
+- `deploy_monitor.py` - Deployment helper
+- `start_monitor.py` - Easy startup
+- `monitor_config.env` - Configuration template
+- `render.yaml` - Render deployment config
 
-## Data Flow
+## Documentation
 
-1. Ringba sends webhook data to `/ringba-webhook`
-2. Data is validated, normalized, and filtered
-3. Duplicates are checked against SQLite database
-4. Valid data is queued for background processing
-5. Background writer flushes data to Google Sheets every 5 seconds or 50 rows
-6. Background cache updates realtime DIDs every 5 minutes
-7. Admin endpoint builds publisher mappings from latest call data
+See `MONITOR_README.md` for complete documentation.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RINGBA_API_TOKEN` | Yes | Your Ringba API token |
+| `SLACK_WEBHOOK_URL` | Yes | Slack webhook URL |
+| `RINGBA_ACCOUNT_ID` | No | Ringba account ID (defaults to provided) |
+
+## Support
+
+This monitoring system works alongside your existing Ringba webhook system without any conflicts.
