@@ -392,9 +392,10 @@ class RingbaMonitor:
         totals_2hour = self.calculate_totals(metrics_2hour) if metrics_2hour else PublisherMetrics(publisher_name="TOTALS")
         totals_daily = self.calculate_totals(metrics_daily) if metrics_daily else PublisherMetrics(publisher_name="TOTALS")
         
-        # Format time range
-        time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} ET"
-        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%Y-%m-%d %H:%M')} ET"
+        # Format time range (show original end time without buffer in display)
+        original_end_time = (end_time - timedelta(minutes=5)).astimezone(timezone(timedelta(hours=-4)))
+        time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} - {original_end_time.strftime('%Y-%m-%d %H:%M')} EDT"
+        daily_range = f"{daily_start_time.strftime('%Y-%m-%d %H:%M')} - {original_end_time.strftime('%Y-%m-%d %H:%M')} EDT"
         
         message = {
             "text": f"📊 Ringba Performance Summary - {time_range}",
@@ -670,7 +671,8 @@ class RingbaMonitor:
             
             # Convert to UTC for API call
             start_time = start_time_est.astimezone(timezone.utc)
-            end_time = end_time_est.astimezone(timezone.utc)
+            # Add 5-minute buffer to end time to ensure all data is captured
+            end_time = (end_time_est + timedelta(minutes=5)).astimezone(timezone.utc)
             
             # Calculate daily range (from 9am EDT today)
             daily_start_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
@@ -678,7 +680,7 @@ class RingbaMonitor:
             
             logger.info(f"Current EDT time: {est_now}")
             logger.info(f"Report type: {report_type}")
-            logger.info(f"Fetching 2-hour data for {start_time} to {end_time}")
+            logger.info(f"Fetching 2-hour data for {start_time} to {end_time} (with 5-minute buffer)")
             logger.info(f"Fetching daily data for {daily_start_utc} to {end_time}")
             
             # Fetch both 2-hour and daily data
