@@ -30,6 +30,9 @@ background_writer_queue = []
 background_writer_lock = asyncio.Lock()
 db_path = "/tmp/ringba.sqlite"
 
+# Memory optimization: Limit queue size to prevent memory issues
+MAX_QUEUE_SIZE = 100
+
 # Environment variables
 RINGBA_CAMPAIGNS = set(os.getenv("RINGBA_CAMPAIGNS", "").split(",")) if os.getenv("RINGBA_CAMPAIGNS") else set()
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
@@ -214,7 +217,7 @@ async def background_writer():
     """Background task to flush queued data to Google Sheets"""
     while True:
         try:
-            await asyncio.sleep(5)  # Wait 5 seconds
+            await asyncio.sleep(2)  # Reduced from 5 to 2 seconds for faster processing
             
             async with background_writer_lock:
                 # Check if there are any items to process (inside the lock)
@@ -228,16 +231,23 @@ async def background_writer():
                          "payout","revenue","_ingested_at"]
                 await ensure_headers_exist("Ringba Raw", headers)
                 
-                # Flush up to 50 rows
-                rows_to_flush = background_writer_queue[:50]
-                background_writer_queue[:] = background_writer_queue[50:]
+                # Flush up to 25 rows (reduced from 50 to prevent memory issues)
+                rows_to_flush = background_writer_queue[:25]
+                background_writer_queue[:] = background_writer_queue[25:]
                 
                 if rows_to_flush:
+                    logger.info(f"📊 WRITING TO SHEETS: {len(rows_to_flush)} rows")
+                    # Log first few call IDs being written
+                    call_ids = [row[0] for row in rows_to_flush[:5]]
+                    logger.info(f"📋 Call IDs being written: {call_ids}")
+                    
                     await append_to_sheet("Ringba Raw", rows_to_flush)
-                    logger.info(f"Flushed {len(rows_to_flush)} rows to Google Sheets")
+                    logger.info(f"✅ Successfully flushed {len(rows_to_flush)} rows to Google Sheets")
                         
         except Exception as e:
-            logger.error(f"Error in background writer: {e}")
+            logger.error(f"❌ Error in background writer: {e}")
+            # Add small delay on error to prevent rapid retry loops
+            await asyncio.sleep(5)
 
 async def background_cache():
     """Background task to maintain realtime DIDs cache"""
@@ -272,14 +282,18 @@ async def ringba_webhook(request: Request):
         # Parse JSON body
         body = await request.json()
         
+        # Log incoming webhook for debugging
+        logger.info(f"📥 WEBHOOK RECEIVED: {json.dumps(body, indent=2)}")
+        
         # Extract call data
         call_id = body.get("call_id")
         if not call_id:
+            logger.error("❌ Missing call_id in webhook")
             raise HTTPException(status_code=400, detail="Missing call_id")
         
         # Check for duplicates
         if is_duplicate(call_id):
-            logger.info(f"Duplicate call_id ignored: {call_id}")
+            logger.warning(f"🔄 Duplicate call_id ignored: {call_id}")
             return {"status": "duplicate"}
         
         # Normalize DID
@@ -289,6 +303,19 @@ async def ringba_webhook(request: Request):
         # Get campaign info (no filtering - accept all calls from Ringba)
         campaign_name = body.get("campaignName", "")
         campaign_id = body.get("campaignId", "")
+        caller_id = body.get("callerId", "")
+        
+        # Log call details
+        logger.info(f"📞 PROCESSING CALL: ID={call_id}, Caller={caller_id}, Campaign={campaign_name or campaign_id}, Publisher={body.get('publisherName', 'Unknown')}")
+        
+        # Check if RINGBA_CAMPAIGNS filtering is active
+        if RINGBA_CAMPAIGNS:
+            logger.info(f"🔍 CAMPAIGN FILTERING ACTIVE: {RINGBA_CAMPAIGNS}")
+            if campaign_name not in RINGBA_CAMPAIGNS and campaign_id not in RINGBA_CAMPAIGNS:
+                logger.warning(f"🚫 Call filtered out by campaign: {call_id} (Campaign: {campaign_name or campaign_id})")
+                return {"status": "filtered"}
+        else:
+            logger.info("✅ No campaign filtering - accepting all calls")
         
         # Prepare row data
         row = [
@@ -296,7 +323,7 @@ async def ringba_webhook(request: Request):
             body.get("callStartUtc", ""),
             did_raw,
             did_canon,
-            body.get("callerId", ""),
+            caller_id,
             body.get("durationSec", ""),
             body.get("disposition", ""),
             campaign_name or campaign_id,
@@ -308,18 +335,27 @@ async def ringba_webhook(request: Request):
             datetime.now(timezone.utc).isoformat()
         ]
         
-        # Add to background writer queue
+        # Add to background writer queue with memory protection
         async with background_writer_lock:
-            background_writer_queue.append(row)
+            if len(background_writer_queue) >= MAX_QUEUE_SIZE:
+                logger.warning(f"⚠️ Queue full ({len(background_writer_queue)}), forcing immediate write")
+                # Force immediate write to prevent memory issues
+                await append_to_sheet("Ringba Raw", [row])
+                logger.info(f"📊 Emergency write: {call_id}")
+            else:
+                background_writer_queue.append(row)
+                queue_size = len(background_writer_queue)
+                logger.info(f"📝 Added to queue: {call_id} (Queue size: {queue_size})")
         
         # Mark as processed
         mark_processed(call_id)
         
-        logger.info(f"Queued call for processing: {call_id}")
+        logger.info(f"✅ Successfully queued call for processing: {call_id}")
         return {"status": "queued"}
         
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error(f"❌ Error processing webhook: {e}")
+        logger.error(f"Request body: {body if 'body' in locals() else 'Failed to parse'}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/refresh-map")
@@ -414,6 +450,42 @@ async def refresh_map():
 async def health_check():
     """Health check endpoint"""
     return HealthResponse(ok=True, realtime_dids=len(realtime_dids))
+
+@app.get("/debug/stats")
+async def debug_stats():
+    """Debug endpoint to show current statistics"""
+    try:
+        import psutil
+        
+        # Count processed calls from database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM processed_calls")
+        processed_count = cursor.fetchone()[0]
+        conn.close()
+        
+        # Get queue size
+        async with background_writer_lock:
+            queue_size = len(background_writer_queue)
+        
+        # Get memory usage
+        memory_info = psutil.virtual_memory()
+        memory_usage_mb = memory_info.used / (1024 * 1024)
+        memory_percent = memory_info.percent
+        
+        return {
+            "status": "ok",
+            "processed_calls": processed_count,
+            "queue_size": queue_size,
+            "realtime_dids": len(realtime_dids),
+            "campaign_filtering": list(RINGBA_CAMPAIGNS) if RINGBA_CAMPAIGNS else "None",
+            "google_sheets_configured": bool(GOOGLE_CREDENTIALS_JSON and MASTER_CPA_DATA),
+            "memory_usage_mb": round(memory_usage_mb, 2),
+            "memory_percent": memory_percent,
+            "memory_warning": memory_usage_mb > 400  # Warning if over 400MB
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 # Startup and shutdown events
 @app.on_event("startup")
