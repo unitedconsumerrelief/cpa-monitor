@@ -556,15 +556,21 @@ class RingbaMonitor:
                 }
             })
         
-        # Add complete table with all publishers
+        # Add complete table with all publishers - FIXED TO INCLUDE SALES COLUMN
         if metrics_2hour:
             table_text = "*📋 ALL Publishers Performance:*\n"
             table_text += "```\n"
-            table_text += f"{'#':<3} {'Publisher':<20} {'Completed':<10} {'CPA':<8} {'Revenue':<10} {'Payout':<10}\n"
+            table_text += f"{'#':<3} {'Publisher':<20} {'Completed':<10} {'Sales':<6} {'Accurate CPA':<15} {'Revenue':<10} {'Payout':<10}\n"
             table_text += "-" * 80 + "\n"
             
             for i, metric in enumerate(sorted(metrics_2hour, key=lambda x: x.completed, reverse=True), 1):
-                table_text += f"{i:<3} {metric.publisher_name[:19]:<20} {metric.completed:<10} ${metric.cpa:<7.2f} ${metric.revenue:<9.2f} ${metric.payout:<9.2f}\n"
+                # Handle special case: show "X Sales / No Payout" for zero payout with sales
+                if hasattr(metric, 'sales_display') and metric.sales_display:
+                    cpa_display = metric.sales_display
+                else:
+                    cpa_display = f"${metric.accurate_cpa:.2f}"
+                
+                table_text += f"{i:<3} {metric.publisher_name[:19]:<20} {metric.completed:<10} {metric.sales_count:<6} {cpa_display:<15} ${metric.revenue:<9.2f} ${metric.payout:<9.2f}\n"
             
             table_text += "```"
             
@@ -579,7 +585,7 @@ class RingbaMonitor:
         # Add CPA analysis
         if metrics_2hour:
             # Calculate CPA statistics
-            cpas = [m.cpa for m in metrics_2hour if m.completed > 0]
+            cpas = [m.accurate_cpa for m in metrics_2hour if m.sales_count > 0]
             if cpas:
                 avg_cpa = sum(cpas) / len(cpas)
                 min_cpa = min(cpas)
@@ -606,7 +612,7 @@ class RingbaMonitor:
                 "type": "mrkdwn",
                 "text": f"*✅ End of Day Summary:*\n"
                        f"• Monitoring completed for {start_time.strftime('%Y-%m-%d')}\n"
-                       f"• Next monitoring cycle starts tomorrow at 11am EDT\n"
+                       f"• Next monitoring cycle starts tomorrow at 6:30 PM EDT\n"
                        f"• All data is accurate and matches Ringba dashboard"
             }
         })
