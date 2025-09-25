@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 import logging
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv('monitor_config.env')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -619,84 +623,53 @@ class RingbaMonitor:
             logger.error(f"Error sending end-of-day Slack message: {e}")
 
     async def run_monitoring_cycle(self):
-        """Run one monitoring cycle"""
+        """Run one monitoring cycle - End of day report only at 6:30 PM EDT"""
         try:
             # Get current EDT time (UTC-4 in summer, UTC-5 in winter)
             est_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-4)))
             
-            # Calculate which 2-hour window we should report on
-            # Reports run at: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EDT
-            # Data windows are: 9-11am, 11am-1pm, 1-3pm, 3-5pm, 5-7pm, 7-9pm EDT
-            
+            # Only run at 6:30 PM EDT for end-of-day report
             current_hour = est_now.hour
+            current_minute = est_now.minute
             
-            # Determine which data window to fetch based on current time
-            if current_hour >= 11 and current_hour < 13:  # 11am-1pm EDT
-                # Report on 9am-11am data
+            # Check if it's 6:30 PM EDT (18:30)
+            if current_hour == 18 and current_minute == 30:
+                # End of day report - fetch data from 9am to 6:30pm EDT
                 start_time_est = est_now.replace(hour=9, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=11, minute=0, second=0, microsecond=0)
-                report_type = "2-hour"
-            elif current_hour >= 13 and current_hour < 15:  # 1pm-3pm EDT
-                # Report on 11am-1pm data
-                start_time_est = est_now.replace(hour=11, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=13, minute=0, second=0, microsecond=0)
-                report_type = "2-hour"
-            elif current_hour >= 15 and current_hour < 17:  # 3pm-5pm EDT
-                # Report on 1pm-3pm data
-                start_time_est = est_now.replace(hour=13, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=15, minute=0, second=0, microsecond=0)
-                report_type = "2-hour"
-            elif current_hour >= 17 and current_hour < 19:  # 5pm-7pm EDT
-                # Report on 3pm-5pm data (with 5-minute buffer)
-                start_time_est = est_now.replace(hour=15, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=17, minute=5, second=0, microsecond=0)  # 5:05pm EDT
-                report_type = "2-hour"
-            elif current_hour >= 19 and current_hour < 21:  # 7pm-9pm EDT
-                # Report on 5pm-7pm data
-                start_time_est = est_now.replace(hour=17, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=19, minute=0, second=0, microsecond=0)
-                report_type = "2-hour"
-            elif current_hour >= 21:  # 9pm EDT - End of day report
-                # Report on 7pm-9pm data + full day summary
-                start_time_est = est_now.replace(hour=19, minute=0, second=0, microsecond=0)
-                end_time_est = est_now.replace(hour=21, minute=0, second=0, microsecond=0)
+                end_time_est = est_now.replace(hour=18, minute=30, second=0, microsecond=0)
                 report_type = "end-of-day"
-            else:
-                # Outside business hours or before 11am, skip
-                logger.info("Outside business hours, skipping monitoring cycle")
-                return
-            
-            # Convert to UTC for API call
-            start_time = start_time_est.astimezone(timezone.utc)
-            end_time = end_time_est.astimezone(timezone.utc)
-            
-            logger.info(f"Current EDT time: {est_now}")
-            logger.info(f"Report type: {report_type}")
-            logger.info(f"Fetching 2-hour data for {start_time} to {end_time}")
-            
-            # Fetch 2-hour data only
-            metrics_2hour = await self.fetch_ringba_data(start_time, end_time)
-            
-            if metrics_2hour:
-                logger.info(f"Fetched {len(metrics_2hour)} 2-hour metrics")
                 
-                # Enhance metrics with accurate CPA calculation
-                metrics_2hour = await self.enhance_metrics_with_accurate_cpa(metrics_2hour, start_time, end_time)
+                # Convert to UTC for API call
+                start_time = start_time_est.astimezone(timezone.utc)
+                end_time = end_time_est.astimezone(timezone.utc)
                 
-                if report_type == "end-of-day":
-                    # Send end-of-day report (using 2-hour data)
+                logger.info(f"Current EDT time: {est_now}")
+                logger.info(f"Report type: {report_type}")
+                logger.info(f"Fetching end-of-day data for {start_time} to {end_time}")
+                
+                # Fetch end-of-day data
+                metrics_2hour = await self.fetch_ringba_data(start_time, end_time)
+                
+                if metrics_2hour:
+                    logger.info(f"Fetched {len(metrics_2hour)} end-of-day metrics")
+                    
+                    # Enhance metrics with accurate CPA calculation
+                    metrics_2hour = await self.enhance_metrics_with_accurate_cpa(metrics_2hour, start_time, end_time)
+                    
+                    # Send end-of-day report
                     await self.send_end_of_day_summary(metrics_2hour, start_time, end_time)
                 else:
-                    # Send regular 2-hour report
-                    await self.send_slack_summary(metrics_2hour, start_time, end_time)
+                    logger.warning("No metrics fetched from Ringba")
             else:
-                logger.warning("No metrics fetched from Ringba")
+                # Not 6:30 PM, skip
+                logger.info(f"Not 6:30 PM EDT (current time: {est_now}), skipping monitoring cycle")
+                return
                 
         except Exception as e:
             logger.error(f"Error in monitoring cycle: {e}")
 
     def is_business_hours(self, dt: datetime) -> bool:
-        """Check if current time is within business hours (9am-9pm EDT, Mon-Sat)"""
+        """Check if current time is 6:30 PM EDT on Monday-Saturday"""
         # Convert to EDT (UTC-4 in summer, UTC-5 in winter)
         edt = dt.astimezone(timezone(timedelta(hours=-4)))
         
@@ -705,27 +678,28 @@ class RingbaMonitor:
         if weekday >= 6:  # Sunday
             return False
         
-        # Check if it's between 9am and 9pm EDT
+        # Check if it's exactly 6:30 PM EDT (18:30)
         hour = edt.hour
-        return 9 <= hour < 21
+        minute = edt.minute
+        return hour == 18 and minute == 30
 
     def get_next_report_time(self) -> datetime:
-        """Get the next report time based on the schedule"""
+        """Get the next report time - only 6:30 PM EDT"""
         now_utc = datetime.now(timezone.utc)
         edt = now_utc.astimezone(timezone(timedelta(hours=-4)))
         
-        # Define report times: 11am, 1pm, 3pm, 5:05pm, 7pm, 9pm EDT (5:05pm for buffer)
-        report_hours = [11, 13, 15, 17, 19, 21]
-        report_minutes = [0, 0, 0, 5, 0, 0]  # 5:05pm for 5pm report
+        # Only report at 6:30 PM EDT (18:30)
+        report_hour = 18
+        report_minute = 30
         
-        # Find next report time today
-        for i, hour in enumerate(report_hours):
-            if edt.hour < hour or (edt.hour == hour and edt.minute < report_minutes[i]):
-                next_time_edt = edt.replace(hour=hour, minute=report_minutes[i], second=0, microsecond=0)
-                return next_time_edt.astimezone(timezone.utc)
+        # Check if we can run today at 6:30 PM EDT
+        if edt.hour < report_hour or (edt.hour == report_hour and edt.minute < report_minute):
+            # Can run today at 6:30 PM EDT
+            next_time_edt = edt.replace(hour=report_hour, minute=report_minute, second=0, microsecond=0)
+            return next_time_edt.astimezone(timezone.utc)
         
-        # If past 9pm today, start tomorrow at 11am EDT
-        next_day = edt.replace(hour=11, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        # If past 6:30 PM today, schedule for tomorrow at 6:30 PM EDT
+        next_day = edt.replace(hour=report_hour, minute=report_minute, second=0, microsecond=0) + timedelta(days=1)
         
         # Skip Sunday (weekday 6)
         while next_day.weekday() == 6:
@@ -735,13 +709,12 @@ class RingbaMonitor:
         return next_day.astimezone(timezone.utc)
 
     async def start_monitoring(self):
-        """Start the monitoring service with the new schedule"""
+        """Start the monitoring service - End of day reports only at 6:30 PM EDT"""
         logger.info("Starting Ringba monitoring service...")
-        logger.info("Schedule: 9am-9pm EDT, Monday-Saturday")
-        logger.info("Reports: 11am, 1pm, 3pm, 5pm, 7pm, 9pm EDT")
-        logger.info("Data windows: 9-11am, 11am-1pm, 1-3pm, 3-5pm, 5-7pm, 7-9pm EDT")
+        logger.info("Schedule: End of day reports only at 6:30 PM EDT, Monday-Saturday")
+        logger.info("Data window: 9:00 AM - 6:30 PM EDT (full business day)")
         
-        # Wait until first report time (11am EDT)
+        # Wait until first report time (6:30 PM EDT)
         next_run = self.get_next_report_time()
         logger.info(f"Next monitoring cycle scheduled for: {next_run.astimezone(timezone(timedelta(hours=-4)))} EDT")
         
@@ -755,7 +728,7 @@ class RingbaMonitor:
                     logger.info(f"Waiting {wait_seconds/3600:.1f} hours until next monitoring cycle...")
                     await asyncio.sleep(wait_seconds)
                 
-                # Run monitoring cycle
+                # Run monitoring cycle (only at 6:30 PM EDT)
                 if self.is_business_hours(datetime.now(timezone.utc)):
                     await self.run_monitoring_cycle()
                     
