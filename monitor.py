@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ringba CPA Monitoring System"""
+"""Ringba CPA Monitoring System - Fixed for date-only filtering"""
 
 import asyncio
 import aiohttp
@@ -253,12 +253,12 @@ class RingbaMonitor:
             return self._get_mock_sales_data()
     
     def _process_spreadsheet_data(self, rows, start_edt: datetime, end_edt: datetime) -> Dict[str, int]:
-        """Process the spreadsheet data to count sales per publisher"""
+        """Process the spreadsheet data to count sales per publisher - DATE ONLY for end-of-day reports"""
         sales_data = {}
         
-        # Note: We don't pre-initialize publishers here anymore
-        # The enhance_metrics_with_accurate_cpa method will handle all Ringba publishers
-        # and this function will only return publishers that have actual sales data
+        # Get target date (just the date part, ignore time)
+        target_date = start_edt.date()
+        logger.info(f"📅 Looking for sales on date: {target_date}")
         
         # Process each row
         for index, row in enumerate(rows):
@@ -273,53 +273,34 @@ class RingbaMonitor:
                 # Get date from Date column
                 date_str = str(row['Date']) if 'Date' in row else ""
                 
-                # Get time from Time column
-                time_str = str(row['Time']) if 'Time' in row else ""
-                
-                # Skip if no date or time
-                if date_str == "nan" or time_str == "nan" or date_str.strip() == "" or time_str.strip() == "":
+                # Skip if no date
+                if date_str == "nan" or date_str.strip() == "":
                     continue
                 
-                # Parse date and time
+                # Parse date (format: 9/25/2025)
                 try:
-                    # Parse date (format: 8/5/2025)
                     date_parts = date_str.split('/')
                     if len(date_parts) == 3:
                         month, day, year = date_parts
-                        sale_date = datetime(int(year), int(month), int(day))
+                        sale_date = datetime(int(year), int(month), int(day)).date()
                         
-                        # Parse time (format: 3:00:30 PM)
-                        if ':' in time_str:
-                            time_parts = time_str.split(':')
-                            if len(time_parts) >= 2:
-                                hour = int(time_parts[0])
-                                minute = int(time_parts[1])
-                                
-                                # Handle AM/PM
-                                if 'PM' in time_str and hour != 12:
-                                    hour += 12
-                                elif 'AM' in time_str and hour == 12:
-                                    hour = 0
-                                
-                                sale_time = datetime.combine(sale_date, datetime.min.time().replace(hour=hour, minute=minute))
-                                # Make timezone aware (EDT)
-                                sale_time = sale_time.replace(tzinfo=timezone(timedelta(hours=-4)))
-                                
-                                # Check if sale is within time range
-                                if start_edt <= sale_time <= end_edt:
-                                    # Add to sales data (initialize if not exists)
-                                    if publisher not in sales_data:
-                                        sales_data[publisher] = 0
-                                    sales_data[publisher] += 1
+                        # Check if sale is on the target date (ignore time for end-of-day reports)
+                        if sale_date == target_date:
+                            # Add to sales data (initialize if not exists)
+                            if publisher not in sales_data:
+                                sales_data[publisher] = 0
+                            sales_data[publisher] += 1
+                            logger.info(f"✅ Found sale for {publisher} on {sale_date}")
                                         
                 except Exception as e:
-                    logger.warning(f"Error parsing date/time for row {index}: {e}")
+                    logger.warning(f"Error parsing date for row {index}: {e}")
                     continue
                     
             except Exception as e:
                 logger.warning(f"Error processing row {index}: {e}")
                 continue
         
+        logger.info(f"📊 Total sales found for {target_date}: {sum(sales_data.values())} sales across {len(sales_data)} publishers")
         return sales_data
     
     def _get_mock_sales_data(self) -> Dict[str, int]:
